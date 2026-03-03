@@ -42,11 +42,24 @@ fn run_event_loop(
         terminal.draw(|frame| draw(frame, app))?;
 
         if let Event::Key(key) = event::read().context("Failed to read event")? {
-            if key.code == KeyCode::Char('e') {
-                // Leave TUI, run editor, then restore and force full redraw.
+            if key.code == KeyCode::Char('e')
+                || key.code == KeyCode::Char('c')
+                || key.code == KeyCode::Char('S')
+            {
+                // Leave TUI, run editor/comment/submit, then restore and force full redraw.
                 disable_raw_mode().ok();
                 stdout().execute(LeaveAlternateScreen).ok();
-                app.open_in_editor();
+                match key.code {
+                    KeyCode::Char('c') => {
+                        app.start_comment();
+                    }
+                    KeyCode::Char('S') => {
+                        app.submit_review();
+                    }
+                    _ => {
+                        app.open_in_editor();
+                    }
+                }
                 enable_raw_mode().ok();
                 stdout().execute(EnterAlternateScreen).ok();
                 terminal.clear()?;
@@ -223,17 +236,23 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(status, status_chunks[0]);
 
     let hints_text = if app.pr_metadata.repo.is_empty() {
-        " n/p:hunk  j/k:scroll  space:viewed  e:editor  ?:help  q:quit"
+        " n/p:hunk  j/k:scroll  space:viewed  e:editor  ?:help  q:quit".to_string()
+    } else if app.pending_comments.is_empty() {
+        " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  g:github  ?:help  q:quit"
+            .to_string()
     } else {
-        " n/p:hunk  j/k:scroll  space:viewed  e:editor  g:github  ?:help  q:quit"
+        format!(
+            " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  S:submit({})  g:github  ?:help  q:quit",
+            app.pending_comments.len()
+        )
     };
-    let hints = Paragraph::new(hints_text).style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(hints_text.as_str()).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hints, status_chunks[1]);
 }
 
 fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let help_width = 50.min(area.width.saturating_sub(4));
-    let help_height = 14.min(area.height.saturating_sub(4));
+    let help_height = 16.min(area.height.saturating_sub(4));
 
     let help_area = Rect {
         x: (area.width - help_width) / 2,
@@ -255,6 +274,8 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("p / [        Previous hunk"),
         Line::from("Space        Toggle viewed"),
         Line::from("e            Open in $EDITOR"),
+        Line::from("c            Comment on hunk (PR only)"),
+        Line::from("S            Submit review (PR only)"),
         Line::from("g            Open in GitHub"),
         Line::from("q / Esc      Quit"),
     ];
@@ -284,6 +305,7 @@ mod tests {
             content_hash: hash.to_string(),
             plus_start: 1,
             rendered: Text::from(lines),
+            raw_segment: String::new(),
         }
     }
 
@@ -292,6 +314,7 @@ mod tests {
             number: 42,
             title: "Test PR".to_string(),
             repo: "test/repo".to_string(),
+            head_sha: String::new(),
         }
     }
 

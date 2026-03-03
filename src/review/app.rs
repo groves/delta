@@ -9,6 +9,13 @@ pub struct ReviewHunk {
     pub content_hash: String,
     pub plus_start: usize,
     pub rendered: Text<'static>,
+    pub raw_segment: String,
+}
+
+pub struct PendingComment {
+    pub path: String,
+    pub line: usize,
+    pub body: String,
 }
 
 pub struct App {
@@ -21,6 +28,7 @@ pub struct App {
     pub show_help: bool,
     /// Starting line offset of each hunk in the concatenated view.
     pub hunk_line_offsets: Vec<u16>,
+    pub pending_comments: Vec<PendingComment>,
 }
 
 impl App {
@@ -34,6 +42,7 @@ impl App {
             should_quit: false,
             show_help: false,
             hunk_line_offsets: Vec::new(),
+            pending_comments: Vec::new(),
         };
         // Auto-mark lock files as viewed.
         for hunk in &app.hunks {
@@ -154,8 +163,15 @@ impl App {
     pub fn open_in_editor(&self) {
         if let Some(hunk) = self.current_hunk() {
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-            let file = &hunk.file_path;
-            let line = hunk.plus_start;
+            let file = if let Some(root) = super::github::repo_root() {
+                std::path::PathBuf::from(root)
+                    .join(&hunk.file_path)
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                hunk.file_path.clone()
+            };
+            let line = first_modified_line(hunk);
 
             let _ = std::process::Command::new(&editor)
                 .arg(format!("+{}", line))
@@ -179,12 +195,170 @@ impl App {
         }
     }
 
+    /// Open $EDITOR with the hunk context and collect a comment for the pending review.
+    /// Returns true if a comment was added.
+    pub fn start_comment(&mut self) -> bool {
+        if self.pr_metadata.repo.is_empty() || self.pr_metadata.head_sha.is_empty() {
+            return false;
+        }
+
+        let hunk = match self.current_hunk() {
+            Some(h) => h,
+            None => return false,
+        };
+        let raw = &hunk.raw_segment;
+        let file_path = hunk.file_path.clone();
+        let plus_start = hunk.plus_start;
+
+        // Extract body lines (skip diff --git, index, ---, +++, @@ headers)
+        let body_lines: Vec<&str> = raw
+            .lines()
+            .skip_while(|l| {
+                l.starts_with("diff --git ")
+                    || l.starts_with("index ")
+                    || l.starts_with("old mode ")
+                    || l.starts_with("new mode ")
+                    || l.starts_with("--- ")
+                    || l.starts_with("+++ ")
+                    || l.starts_with("@@")
+                    || l.starts_with("similarity ")
+                    || l.starts_with("rename ")
+                    || l.starts_with("new file ")
+                    || l.starts_with("deleted file ")
+            })
+            .collect();
+
+        // Number each line: context and + lines get new-file line numbers, - lines get blank
+        let mut numbered = String::new();
+        let mut line_num = plus_start;
+        for l in &body_lines {
+            if l.starts_with('-') {
+                numbered.push_str(&format!("    :{}\n", l));
+            } else {
+                numbered.push_str(&format!("{:>4}:{}\n", line_num, l));
+                line_num += 1;
+            }
+        }
+
+        // Write to temp file
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let tmp_path = format!("{}/drev-comment-{}", tmp_dir, std::process::id());
+        if std::fs::write(&tmp_path, &numbered).is_err() {
+            return false;
+        }
+
+        // Open $EDITOR
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+        let status = std::process::Command::new(&editor)
+            .arg(&tmp_path)
+            .status();
+
+        let ok = matches!(status, Ok(s) if s.success());
+        if !ok {
+            let _ = std::fs::remove_file(&tmp_path);
+            return false;
+        }
+
+        let contents = match std::fs::read_to_string(&tmp_path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let _ = std::fs::remove_file(&tmp_path);
+
+        // Parse: find last diff line matching ^\s*(\d+):[+ ] — its number is target line.
+        // Everything after the last diff line is the comment body.
+        let mut last_diff_idx = None;
+        let mut target_line = None;
+        for (i, line) in contents.lines().enumerate() {
+            let trimmed = line.trim_start();
+            // Match lines like "42: context" or "42:+added" or "   :-removed"
+            if let Some(colon_pos) = trimmed.find(':') {
+                let before = &trimmed[..colon_pos];
+                let after_colon = &trimmed[colon_pos + 1..];
+                if after_colon.starts_with(' ')
+                    || after_colon.starts_with('+')
+                    || after_colon.starts_with('-')
+                {
+                    last_diff_idx = Some(i);
+                    if let Ok(n) = before.parse::<usize>() {
+                        target_line = Some(n);
+                    }
+                }
+            }
+        }
+
+        let (last_diff_idx, target_line) = match (last_diff_idx, target_line) {
+            (Some(i), Some(l)) => (i, l),
+            _ => return false,
+        };
+
+        let comment_body: String = contents
+            .lines()
+            .skip(last_diff_idx + 1)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+
+        if comment_body.is_empty() {
+            return false;
+        }
+
+        self.pending_comments.push(PendingComment {
+            path: file_path,
+            line: target_line,
+            body: comment_body,
+        });
+
+        true
+    }
+
+    /// Submit all pending comments as a single GitHub review.
+    /// Returns the review URL on success.
+    pub fn submit_review(&mut self) -> Option<String> {
+        if self.pending_comments.is_empty() {
+            return None;
+        }
+
+        let url = super::github::create_pr_review(
+            &self.pr_metadata.repo,
+            self.pr_metadata.number,
+            &self.pr_metadata.head_sha,
+            &self.pending_comments,
+        )
+        .ok()?;
+
+        self.pending_comments.clear();
+        let _ = super::github::open_in_browser(&url);
+        Some(url)
+    }
+
     pub fn viewed_count(&self) -> usize {
         self.hunks
             .iter()
             .filter(|h| self.viewed.contains(&h.content_hash))
             .count()
     }
+}
+
+/// Find the line number of the first `+` (added) line in the hunk's raw diff.
+/// Falls back to `plus_start` if there are no additions.
+fn first_modified_line(hunk: &ReviewHunk) -> usize {
+    let mut line_num = hunk.plus_start;
+    let in_body = hunk.raw_segment.lines().skip_while(|l| {
+        !l.starts_with("@@")
+    }).skip(1); // skip the @@ line itself
+
+    for l in in_body {
+        if l.starts_with('+') {
+            return line_num;
+        } else if l.starts_with('-') {
+            // deletions don't advance the new-file line counter
+        } else {
+            line_num += 1; // context line
+        }
+    }
+    hunk.plus_start
 }
 
 #[cfg(test)]
@@ -201,6 +375,7 @@ mod tests {
             content_hash: hash.to_string(),
             plus_start: 1,
             rendered: Text::from(lines),
+            raw_segment: String::new(),
         }
     }
 
@@ -209,6 +384,7 @@ mod tests {
             number: 1,
             title: "test".to_string(),
             repo: "test/repo".to_string(),
+            head_sha: String::new(),
         }
     }
 

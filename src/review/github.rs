@@ -6,6 +6,7 @@ pub struct PrMetadata {
     pub number: u64,
     pub title: String,
     pub repo: String,
+    pub head_sha: String,
 }
 
 pub fn fetch_pr_diff(pr_number: u64, repo: Option<&str>) -> Result<String> {
@@ -35,7 +36,7 @@ pub fn fetch_pr_metadata(pr_number: u64, repo: Option<&str>) -> Result<PrMetadat
         "view",
         &pr_number.to_string(),
         "--json",
-        "number,title,url",
+        "number,title,url,headRefOid",
     ]);
 
     if let Some(r) = repo {
@@ -63,6 +64,7 @@ pub fn fetch_pr_metadata(pr_number: u64, repo: Option<&str>) -> Result<PrMetadat
         number: json["number"].as_u64().unwrap_or(pr_number),
         title: json["title"].as_str().unwrap_or("").to_string(),
         repo: repo_slug,
+        head_sha: json["headRefOid"].as_str().unwrap_or("").to_string(),
     })
 }
 
@@ -91,6 +93,36 @@ fn github_path_hash(path: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(path.as_bytes());
     format!("{:x}", hash)
+}
+
+/// Return the repository workspace root directory.
+/// Tries `jj workspace root` first, then falls back to `git rev-parse --show-toplevel`.
+pub fn repo_root() -> Option<String> {
+    if let Ok(output) = Command::new("jj")
+        .args(["workspace", "root"])
+        .output()
+    {
+        if output.status.success() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !root.is_empty() {
+                return Some(root);
+            }
+        }
+    }
+
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        if output.status.success() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !root.is_empty() {
+                return Some(root);
+            }
+        }
+    }
+
+    None
 }
 
 pub fn fetch_local_diff() -> Result<String> {
@@ -128,6 +160,7 @@ pub fn local_metadata() -> Result<PrMetadata> {
         number: 0,
         title,
         repo: String::new(),
+        head_sha: String::new(),
     })
 }
 
@@ -241,6 +274,68 @@ pub fn pr_number_for_current_bookmark(repo: Option<&str>) -> Result<(u64, Option
         .ok_or_else(|| anyhow!("No PR number found for bookmark '{}'", bookmark))?;
 
     Ok((number, inferred_repo))
+}
+
+pub fn create_pr_review(
+    repo: &str,
+    pr_number: u64,
+    head_sha: &str,
+    comments: &[super::app::PendingComment],
+) -> Result<String> {
+    let review_comments: Vec<serde_json::Value> = comments
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "path": c.path,
+                "line": c.line,
+                "side": "RIGHT",
+                "body": c.body,
+            })
+        })
+        .collect();
+
+    let body = serde_json::json!({
+        "commit_id": head_sha,
+        "event": "COMMENT",
+        "comments": review_comments,
+    });
+
+    let output = Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{}/pulls/{}/reviews", repo, pr_number),
+            "--method",
+            "POST",
+            "--input",
+            "-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(body.to_string().as_bytes())?;
+            }
+            child.wait_with_output()
+        })
+        .context("Failed to execute `gh api`. Is the GitHub CLI (`gh`) installed?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("gh api review failed: {}", stderr.trim()));
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse review response JSON")?;
+
+    let url = json["html_url"]
+        .as_str()
+        .ok_or_else(|| anyhow!("No html_url in review response"))?
+        .to_string();
+
+    Ok(url)
 }
 
 pub fn open_in_browser(url: &str) -> Result<()> {

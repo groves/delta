@@ -140,6 +140,7 @@ fn render_hunks(file_diffs: &[FileDiff], config: &Config) -> Result<Vec<ReviewHu
                 content_hash: hunk.content_hash.clone(),
                 plus_start: hunk.plus_start,
                 rendered,
+                raw_segment: hunk.raw_segment.clone(),
             });
         }
     }
