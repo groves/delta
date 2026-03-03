@@ -238,7 +238,7 @@ pub mod tests {
 ";
         let git_config_path = "delta__test_recursive_features.gitconfig";
         let opt = make_options_from_args_and_git_config(
-            &["delta"],
+            &[],
             Some(git_config_contents),
             Some(git_config_path),
         );

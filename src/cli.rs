@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bat::assets::HighlightingAssets;
-use clap::error::Error;
 use clap::{ArgMatches, ColorChoice, CommandFactory, FromArgMatches, Parser, ValueEnum, ValueHint};
-use clap_complete::Shell;
 use console::Term;
 use lazy_static::lazy_static;
 use syntect::highlighting::Theme as SyntaxTheme;
@@ -17,7 +15,6 @@ use crate::config::delta_unreachable;
 use crate::env::DeltaEnv;
 use crate::git_config::GitConfig;
 use crate::options;
-use crate::subcommands;
 use crate::utils;
 use crate::utils::bat::output::PagingMode;
 
@@ -169,21 +166,6 @@ pub struct Opt {
     #[arg(long = "detect-dark-light", value_enum, default_value_t = DetectDarkLight::default())]
     pub detect_dark_light: DetectDarkLight,
 
-    #[arg(
-        long = "diff-args",
-        short = '@',
-        default_value = "",
-        value_name = "STRING"
-    )]
-    /// Extra arguments to pass to `git diff` when using delta to diff two files.
-    ///
-    /// E.g. `delta --diff-args=-U999 file_1 file_2` is equivalent to
-    /// `git diff --no-index --color -U999 file_1 file_2 | delta`.
-    ///
-    /// If you use process substitution (`delta <(command_1) <(command_2)`) and your git version
-    /// doesn't support it, then delta will fall back to `diff` instead of `git diff`.
-    pub diff_args: String,
-
     #[arg(long = "diff-highlight")]
     /// Emulate diff-highlight.
     ///
@@ -280,10 +262,6 @@ pub struct Opt {
     #[arg(long = "file-transformation", value_name = "SED_CMD")]
     /// Sed-style command transforming file paths for display.
     pub file_regex_replacement: Option<String>,
-
-    #[arg(long = "generate-completion")]
-    /// Print completion file for the given shell.
-    pub generate_completion: Option<Shell>,
 
     #[arg(long = "grep-context-line-style", value_name = "STYLE")]
     /// Style string for non-matching lines of grep output.
@@ -577,14 +555,6 @@ pub struct Opt {
     /// See STYLES and LINE NUMBERS sections.
     pub line_numbers_zero_style: String,
 
-    #[arg(long = "list-languages")]
-    /// List supported languages and associated file extensions.
-    pub list_languages: bool,
-
-    #[arg(long = "list-syntax-themes")]
-    /// List available syntax-highlighting color themes.
-    pub list_syntax_themes: bool,
-
     #[arg(long = "map-styles", value_name = "STYLES_MAP")]
     /// Map styles encountered in raw input to desired output styles.
     ///
@@ -758,13 +728,6 @@ pub struct Opt {
     /// Options are: auto, always, and never.
     pub paging_mode: String,
 
-    #[arg(long = "parse-ansi")]
-    /// Display ANSI color escape sequences in human-readable form.
-    ///
-    /// Example usage: git show --color=always | delta --parse-ansi
-    /// This can be used to help identify input style strings to use with map-styles.
-    pub parse_ansi: bool,
-
     #[arg(
         long = "plus-emph-style",
         default_value = "syntax auto",
@@ -837,13 +800,6 @@ pub struct Opt {
     /// experiment with colors by combining this option with other options such as --minus-style,
     /// --zero-style, --plus-style, --light, --dark, etc.
     pub show_config: bool,
-
-    #[arg(long = "show-syntax-themes")]
-    /// Show example diff for available syntax-highlighting themes.
-    ///
-    /// If diff output is supplied on standard input then this will be used for the demo. For
-    /// example: `git show | delta --show-syntax-themes`.
-    pub show_syntax_themes: bool,
 
     #[arg(long = "show-themes")]
     /// Show example diff for available delta themes.
@@ -975,14 +931,6 @@ pub struct Opt {
     #[arg(long = "24-bit-color", value_name = "auto|always|never", value_parser = ["auto", "always", "never"])]
     /// Deprecated: use --true-color.
     pub _24_bit_color: Option<String>,
-
-    /// First file to be compared when delta is being used to diff two files.
-    ///
-    /// `delta file1 file2` is equivalent to `diff -u file1 file2 | delta`.
-    pub minus_file: Option<PathBuf>,
-
-    /// Second file to be compared when delta is being used to diff two files.
-    pub plus_file: Option<PathBuf>,
 
     #[arg(skip)]
     pub computed: ComputedValues,
@@ -1217,8 +1165,6 @@ pub enum DetectDarkLight {
 #[derive(Debug)]
 pub enum Call<T> {
     Delta(T),
-    DeltaDiff(T, PathBuf, PathBuf),
-    SubCommand(T, subcommands::SubCommand),
     Help(String),
     Version(String),
 }
@@ -1272,32 +1218,9 @@ impl Opt {
                 Call::Help(help)
             }
             Err(e) => {
-                // Calls `e.exit()` if error persists.
-                let (matches, subcmd) = subcommands::extract(args, e);
-                Call::SubCommand(matches, subcmd)
+                e.exit();
             }
-            Ok(matches) => {
-                // subcommands take precedence over diffs
-                let minus_file = matches.get_one::<PathBuf>("minus_file").map(PathBuf::from);
-                if let Some(subcmd) = &minus_file
-                    && let Some(arg) = subcmd.to_str()
-                    && subcommands::SUBCOMMANDS.contains(&arg)
-                {
-                    let unreachable_error = Error::new(clap::error::ErrorKind::InvalidSubcommand);
-                    let (matches, subcmd) = subcommands::extract(args, unreachable_error);
-                    return Call::SubCommand(matches, subcmd);
-                }
-
-                match (
-                    minus_file,
-                    matches.get_one::<PathBuf>("plus_file").map(PathBuf::from),
-                ) {
-                    (Some(minus_file), Some(plus_file)) => {
-                        Call::DeltaDiff(matches, minus_file, plus_file)
-                    }
-                    _ => Call::Delta(matches),
-                }
-            }
+            Ok(matches) => Call::Delta(matches),
         }
     }
 
@@ -1315,8 +1238,6 @@ impl Opt {
         };
         let (matches, call) = match Self::handle_help_and_version(&args) {
             Call::Delta(t) => (t, Call::Delta(())),
-            Call::DeltaDiff(t, a, b) => (t, Call::DeltaDiff((), a, b)),
-            Call::SubCommand(t, cmd) => (t, Call::SubCommand((), cmd)),
             Call::Help(help) => return (Call::Help(help), None),
             Call::Version(ver) => return (Call::Version(ver), None),
         };
@@ -1396,13 +1317,6 @@ impl Opt {
 // Option names to exclude when listing options to process for various purposes. These are all
 // pseudo-flag commands such as --list-languages
 lazy_static! {
-    static ref IGNORED_OPTION_NAMES: HashSet<&'static str> = vec![
-        "generate-completion",
-        "list-languages",
-        "list-syntax-themes",
-        "show-config",
-        "show-syntax-themes",
-    ]
-    .into_iter()
-    .collect();
+    static ref IGNORED_OPTION_NAMES: HashSet<&'static str> =
+        vec!["show-config",].into_iter().collect();
 }

@@ -56,9 +56,7 @@ fn _make_options_from_args_and_git_config(
     git_config_path: Option<&str>,
     honor_env_var: bool,
 ) -> cli::Opt {
-    let mut args: Vec<&str> = itertools::chain(&["/dev/null", "/dev/null"], args)
-        .copied()
-        .collect();
+    let mut args: Vec<&str> = itertools::chain(&["delta"], args).copied().collect();
     let git_config = match (git_config_contents, git_config_path) {
         (Some(contents), Some(path)) => Some(make_git_config(&env, contents, path, honor_env_var)),
         _ => {

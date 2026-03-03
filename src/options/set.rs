@@ -140,7 +140,6 @@ pub fn set_options(
             commit_regex,
             commit_style,
             default_language,
-            diff_args,
             diff_stat_align_width,
             file_added_label,
             file_copied_label,
@@ -202,7 +201,6 @@ pub fn set_options(
             line_numbers_zero_style,
             pager,
             paging_mode,
-            parse_ansi,
             // Hack: plus-style must come before plus-*emph-style because the latter default
             // dynamically to the value of the former.
             plus_style,
