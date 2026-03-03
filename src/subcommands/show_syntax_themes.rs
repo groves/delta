@@ -25,11 +25,7 @@ pub fn show_syntax_themes() -> std::io::Result<()> {
     let stdin_data = if !io::stdin().is_terminal() {
         let mut buf = Vec::new();
         io::stdin().lock().read_to_end(&mut buf)?;
-        if !buf.is_empty() {
-            Some(buf)
-        } else {
-            None
-        }
+        if !buf.is_empty() { Some(buf) } else { None }
     } else {
         None
     };

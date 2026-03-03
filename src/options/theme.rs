@@ -13,12 +13,12 @@
 //!
 //! In the absence of other factors, the default assumes a dark terminal background.
 
-use std::io::{stdout, IsTerminal};
+use std::io::{IsTerminal, stdout};
 
 use bat;
 use bat::assets::HighlightingAssets;
 #[cfg(not(test))]
-use terminal_colorsaurus::{color_scheme, QueryOptions};
+use terminal_colorsaurus::{QueryOptions, color_scheme};
 
 use crate::cli::{self, DetectDarkLight};
 use crate::color::{ColorMode, ColorMode::*};

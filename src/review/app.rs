@@ -249,9 +249,7 @@ impl App {
 
         // Open $EDITOR
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-        let status = std::process::Command::new(&editor)
-            .arg(&tmp_path)
-            .status();
+        let status = std::process::Command::new(&editor).arg(&tmp_path).status();
 
         let ok = matches!(status, Ok(s) if s.success());
         if !ok {
@@ -345,9 +343,11 @@ impl App {
 /// Falls back to `plus_start` if there are no additions.
 fn first_modified_line(hunk: &ReviewHunk) -> usize {
     let mut line_num = hunk.plus_start;
-    let in_body = hunk.raw_segment.lines().skip_while(|l| {
-        !l.starts_with("@@")
-    }).skip(1); // skip the @@ line itself
+    let in_body = hunk
+        .raw_segment
+        .lines()
+        .skip_while(|l| !l.starts_with("@@"))
+        .skip(1); // skip the @@ line itself
 
     for l in in_body {
         if l.starts_with('+') {
@@ -409,10 +409,7 @@ mod tests {
 
     #[test]
     fn offsets_account_for_collapsed_hunks() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 10),
-            make_hunk("b.rs", "h2", 10),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 10), make_hunk("b.rs", "h2", 10)];
         // h1 is viewed (collapsed = 1 line), h2 is not (10 lines).
         let viewed: HashSet<String> = ["h1".to_string()].into();
         let app = App::new(hunks, viewed, make_metadata());
@@ -423,10 +420,7 @@ mod tests {
 
     #[test]
     fn offsets_all_expanded() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 10),
-            make_hunk("b.rs", "h2", 10),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 10), make_hunk("b.rs", "h2", 10)];
         let app = App::new(hunks, HashSet::new(), make_metadata());
         // hunk 0: offset=0, height=10, separator=1 → next at 11
         // hunk 1: offset=11
@@ -467,7 +461,10 @@ mod tests {
         app.toggle_viewed();
 
         assert!(app.viewed.contains("h1"));
-        assert_eq!(app.current_hunk, 3, "should skip viewed h2, h3 and land on h4");
+        assert_eq!(
+            app.current_hunk, 3,
+            "should skip viewed h2, h3 and land on h4"
+        );
     }
 
     #[test]
@@ -484,15 +481,15 @@ mod tests {
         app.toggle_viewed();
 
         assert!(app.viewed.contains("h1"));
-        assert_eq!(app.current_hunk, 0, "should stay when no unviewed hunks remain after");
+        assert_eq!(
+            app.current_hunk, 0,
+            "should stay when no unviewed hunks remain after"
+        );
     }
 
     #[test]
     fn toggle_unview_expands_and_stays() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 10),
-            make_hunk("b.rs", "h2", 10),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 10), make_hunk("b.rs", "h2", 10)];
         let viewed: HashSet<String> = ["h1".to_string()].into();
         let mut app = App::new(hunks, viewed, make_metadata());
         // Navigate to hunk 0 (which is viewed/collapsed).
@@ -511,10 +508,7 @@ mod tests {
     /// that viewed hunks produce a single collapsed line.
     #[test]
     fn draw_produces_collapsed_line_for_viewed_hunk() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 10),
-            make_hunk("b.rs", "h2", 10),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 10), make_hunk("b.rs", "h2", 10)];
         let viewed: HashSet<String> = ["h1".to_string()].into();
         let app = App::new(hunks, viewed, make_metadata());
 
@@ -537,7 +531,10 @@ mod tests {
         // Hunk 0 is viewed → 1 collapsed line, then separator, then hunk 1 → 10 lines.
         // Total = 1 + 1 + 10 = 12.
         assert_eq!(lines.len(), 12);
-        assert!(lines[0].contains("[viewed]"), "first line should be collapsed summary");
+        assert!(
+            lines[0].contains("[viewed]"),
+            "first line should be collapsed summary"
+        );
         assert_eq!(lines[1], "separator");
     }
 }

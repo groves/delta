@@ -128,12 +128,11 @@ impl StateMachine<'_> {
                 _ => Unified,
             };
 
-            if self.minus_line_counter.must_count() {
-                if let &[(_, minus_lines), (_, _plus_lines), ..] =
+            if self.minus_line_counter.must_count()
+                && let &[(_, minus_lines), (_, _plus_lines), ..] =
                     parsed_hunk_header.line_numbers_and_hunk_lengths.as_slice()
-                {
-                    self.minus_line_counter = AmbiguousDiffMinusCounter::count_from(minus_lines);
-                }
+            {
+                self.minus_line_counter = AmbiguousDiffMinusCounter::count_from(minus_lines);
             }
 
             self.state = HunkHeader(

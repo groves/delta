@@ -35,7 +35,7 @@ impl std::fmt::Debug for SubCmdKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             SubCmdKind::Git(Some(arg)) => {
-                return formatter.write_fmt(format_args!("\"git {}\"", arg.escape_debug()))
+                return formatter.write_fmt(format_args!("\"git {}\"", arg.escape_debug()));
             }
             _ => format!("{self}"),
         };

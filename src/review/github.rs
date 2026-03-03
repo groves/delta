@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 pub struct PrMetadata {
     pub number: u64,
@@ -43,9 +43,9 @@ pub fn fetch_pr_metadata(pr_number: u64, repo: Option<&str>) -> Result<PrMetadat
         cmd.args(["--repo", r]);
     }
 
-    let output = cmd.output().context(
-        "Failed to execute `gh pr view`. Is the GitHub CLI (`gh`) installed?",
-    )?;
+    let output = cmd
+        .output()
+        .context("Failed to execute `gh pr view`. Is the GitHub CLI (`gh`) installed?")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -98,27 +98,23 @@ fn github_path_hash(path: &str) -> String {
 /// Return the repository workspace root directory.
 /// Tries `jj workspace root` first, then falls back to `git rev-parse --show-toplevel`.
 pub fn repo_root() -> Option<String> {
-    if let Ok(output) = Command::new("jj")
-        .args(["workspace", "root"])
-        .output()
+    if let Ok(output) = Command::new("jj").args(["workspace", "root"]).output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !root.is_empty() {
-                return Some(root);
-            }
+        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !root.is_empty() {
+            return Some(root);
         }
     }
 
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !root.is_empty() {
-                return Some(root);
-            }
+        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !root.is_empty() {
+            return Some(root);
         }
     }
 
@@ -150,7 +146,10 @@ pub fn local_metadata() -> Result<PrMetadata> {
         if desc.is_empty() {
             "(no description)".to_string()
         } else {
-            desc.lines().next().unwrap_or("(no description)").to_string()
+            desc.lines()
+                .next()
+                .unwrap_or("(no description)")
+                .to_string()
         }
     } else {
         "(no description)".to_string()
@@ -253,9 +252,9 @@ pub fn pr_number_for_current_bookmark(repo: Option<&str>) -> Result<(u64, Option
         cmd.args(["--repo", r]);
     }
 
-    let output = cmd.output().context(
-        "Failed to execute `gh pr view`. Is the GitHub CLI (`gh`) installed?",
-    )?;
+    let output = cmd
+        .output()
+        .context("Failed to execute `gh pr view`. Is the GitHub CLI (`gh`) installed?")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

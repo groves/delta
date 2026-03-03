@@ -6,10 +6,10 @@ use regex::Regex;
 use crate::color::ColorMode::*;
 use crate::config;
 use crate::delta::State;
+use crate::features::OptionValueFunction;
 use crate::features::hyperlinks;
 use crate::features::side_by_side::ansifill::{self, ODD_PAD_CHAR};
 use crate::features::side_by_side::{Left, PanelSide, Right};
-use crate::features::OptionValueFunction;
 use crate::format::{self, Align, Placeholder};
 use crate::minusplus::*;
 use crate::style::Style;
@@ -326,7 +326,7 @@ pub mod tests {
     use crate::ansi::strip_ansi_codes;
     use crate::features::side_by_side::ansifill::ODD_PAD_CHAR;
     use crate::format::FormatStringData;
-    use crate::tests::integration_test_utils::{make_config_from_args, run_delta, DeltaTest};
+    use crate::tests::integration_test_utils::{DeltaTest, make_config_from_args, run_delta};
 
     use super::*;
 

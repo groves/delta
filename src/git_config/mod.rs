@@ -241,10 +241,10 @@ impl GitConfigGet for bool {
 
 impl GitConfigGet for usize {
     fn git_config_get(key: &str, git_config: &GitConfig) -> Option<Self> {
-        if let Some(s) = git_config.config_from_env_var.get(key) {
-            if let Ok(n) = s.parse::<usize>() {
-                return Some(n);
-            }
+        if let Some(s) = git_config.config_from_env_var.get(key)
+            && let Ok(n) = s.parse::<usize>()
+        {
+            return Some(n);
         }
         match git_config.config.get_i64(key) {
             Ok(value) => Some(value as usize),
@@ -255,10 +255,10 @@ impl GitConfigGet for usize {
 
 impl GitConfigGet for f64 {
     fn git_config_get(key: &str, git_config: &GitConfig) -> Option<Self> {
-        if let Some(s) = git_config.config_from_env_var.get(key) {
-            if let Ok(n) = s.parse::<f64>() {
-                return Some(n);
-            }
+        if let Some(s) = git_config.config_from_env_var.get(key)
+            && let Ok(n) = s.parse::<f64>()
+        {
+            return Some(n);
         }
         match git_config.config.get_string(key) {
             Ok(value) => value.parse::<f64>().ok(),

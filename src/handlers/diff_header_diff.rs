@@ -1,5 +1,5 @@
 use crate::delta::{DiffType, InMergeConflict, MergeParents, State, StateMachine};
-use crate::handlers::diff_header::{get_repeated_file_path_from_diff_line, FileEvent};
+use crate::handlers::diff_header::{FileEvent, get_repeated_file_path_from_diff_line};
 
 impl StateMachine<'_> {
     #[inline]

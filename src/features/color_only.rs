@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use crate::features::raw;
 use crate::features::OptionValueFunction;
+use crate::features::raw;
 
 /// color-only is like raw but does not override these styles.
 pub fn make_feature() -> Vec<(String, OptionValueFunction)> {

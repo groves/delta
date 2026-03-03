@@ -1,11 +1,11 @@
 use std::io::{self, stdout};
 
 use anyhow::{Context, Result};
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -123,7 +123,7 @@ fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // header
-            Constraint::Min(0),   // diff content
+            Constraint::Min(0),    // diff content
             Constraint::Length(2), // status + keybindings
         ])
         .split(area);
@@ -177,9 +177,10 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            lines.push(
-                Line::from(Span::styled("─".repeat(area.width as usize), sep_style)),
-            );
+            lines.push(Line::from(Span::styled(
+                "─".repeat(area.width as usize),
+                sep_style,
+            )));
         }
 
         let is_viewed = app.viewed.contains(&hunk.content_hash);
@@ -223,10 +224,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             ""
         };
-        format!(
-            " {}:{}{}",
-            hunk.file_path, hunk.plus_start, viewed_marker
-        )
+        format!(" {}:{}{}", hunk.file_path, hunk.plus_start, viewed_marker)
     } else {
         " No hunks".to_string()
     };
@@ -347,10 +345,7 @@ mod tests {
 
     #[test]
     fn initial_render_shows_first_hunk_content() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 3),
-            make_hunk("b.rs", "h2", 3),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 3), make_hunk("b.rs", "h2", 3)];
         let app = App::new(hunks, HashSet::new(), make_metadata());
         let rows = render(&app, 80, 20);
 
@@ -365,10 +360,7 @@ mod tests {
 
     #[test]
     fn pressing_v_collapses_hunk_and_advances() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 5),
-            make_hunk("b.rs", "h2", 5),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 5), make_hunk("b.rs", "h2", 5)];
         let mut app = App::new(hunks, HashSet::new(), make_metadata());
 
         // Initial: hunk 0 is current, its content is visible.
@@ -403,10 +395,7 @@ mod tests {
 
     #[test]
     fn pressing_v_on_viewed_hunk_expands_it() {
-        let hunks = vec![
-            make_hunk("a.rs", "h1", 5),
-            make_hunk("b.rs", "h2", 5),
-        ];
+        let hunks = vec![make_hunk("a.rs", "h1", 5), make_hunk("b.rs", "h2", 5)];
         let viewed: HashSet<String> = ["h1".to_string()].into();
         let mut app = App::new(hunks, viewed, make_metadata());
 

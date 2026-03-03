@@ -11,7 +11,7 @@ pub mod show_themes;
 // start external processes, e.g. `git diff` or `rg`, output is read by delta
 pub mod diff;
 mod external;
-pub(crate) use external::extract;
+pub(crate) use external::SUBCOMMANDS;
 pub(crate) use external::SubCmdKind;
 pub(crate) use external::SubCommand;
-pub(crate) use external::SUBCOMMANDS;
+pub(crate) use external::extract;

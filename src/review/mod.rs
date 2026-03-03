@@ -16,11 +16,10 @@ use self::app::ReviewHunk;
 use self::diff_parser::FileDiff;
 
 pub fn run(pr_number: u64, repo: Option<&str>, config: &Config, dry_run: bool) -> Result<()> {
-    let diff_text = github::fetch_pr_diff(pr_number, repo)
-        .context("Failed to fetch PR diff")?;
+    let diff_text = github::fetch_pr_diff(pr_number, repo).context("Failed to fetch PR diff")?;
 
-    let metadata = github::fetch_pr_metadata(pr_number, repo)
-        .context("Failed to fetch PR metadata")?;
+    let metadata =
+        github::fetch_pr_metadata(pr_number, repo).context("Failed to fetch PR metadata")?;
 
     let file_diffs = diff_parser::parse_diff(&diff_text);
 
@@ -49,11 +48,9 @@ pub fn run(pr_number: u64, repo: Option<&str>, config: &Config, dry_run: bool) -
 }
 
 pub fn run_local(config: &Config, dry_run: bool) -> Result<()> {
-    let diff_text = github::fetch_local_diff()
-        .context("Failed to fetch local diff")?;
+    let diff_text = github::fetch_local_diff().context("Failed to fetch local diff")?;
 
-    let metadata = github::local_metadata()
-        .context("Failed to fetch local metadata")?;
+    let metadata = github::local_metadata().context("Failed to fetch local metadata")?;
 
     let file_diffs = diff_parser::parse_diff(&diff_text);
 

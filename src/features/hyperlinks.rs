@@ -70,14 +70,14 @@ pub fn format_commit_line_with_osc8_commit_hyperlink<'a>(
                     .with_input(line, &first_match, &mut matches);
             return Cow::from(result);
         }
-    } else if let Some(config) = config.git_config() {
-        if let Some(repo) = config.get_remote_url() {
-            let mut matches = COMMIT_HASH_REGEX.find_iter(line);
-            if let Some(first_match) = matches.next() {
-                let result = HyperlinkCommits(|commit_hash| repo.format_commit_url(commit_hash))
-                    .with_input(line, &first_match, &mut matches);
-                return Cow::from(result);
-            }
+    } else if let Some(config) = config.git_config()
+        && let Some(repo) = config.get_remote_url()
+    {
+        let mut matches = COMMIT_HASH_REGEX.find_iter(line);
+        if let Some(first_match) = matches.next() {
+            let result = HyperlinkCommits(|commit_hash| repo.format_commit_url(commit_hash))
+                .with_input(line, &first_match, &mut matches);
+            return Cow::from(result);
         }
     }
     Cow::from(line)
@@ -127,7 +127,7 @@ pub mod tests {
     use super::*;
 
     use crate::{
-        tests::integration_test_utils::{self, make_config_from_args, DeltaTest},
+        tests::integration_test_utils::{self, DeltaTest, make_config_from_args},
         utils,
     };
 
@@ -168,9 +168,12 @@ pub mod tests {
 
         let line = "a2272718f0+b398e48652ace17f,ca85c1962b3fc2";
         let result = format_commit_line_with_osc8_commit_hyperlink(line, &config);
-        assert_eq!(result, "\u{1b}]8;;HERE:a2272718f0\u{1b}\\a2272718f0\u{1b}]8;;\u{1b}\\+\u{1b}]8;;\
+        assert_eq!(
+            result,
+            "\u{1b}]8;;HERE:a2272718f0\u{1b}\\a2272718f0\u{1b}]8;;\u{1b}\\+\u{1b}]8;;\
         HERE:b398e48652ace17f\u{1b}\\b398e48652ace17f\u{1b}]8;;\u{1b}\\,\u{1b}]8;;HERE:ca85c1962b3fc2\
-        \u{1b}\\ca85c1962b3fc2\u{1b}]8;;\u{1b}\\");
+        \u{1b}\\ca85c1962b3fc2\u{1b}]8;;\u{1b}\\"
+        );
 
         let line = "This 01234abcdf Hash";
         let result = format_commit_line_with_osc8_commit_hyperlink(line, &config);

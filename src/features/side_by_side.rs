@@ -4,11 +4,11 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::ansi;
 use crate::cli;
-use crate::config::{self, delta_unreachable, Config};
+use crate::config::{self, Config, delta_unreachable};
 use crate::delta::DiffType;
 use crate::delta::State;
 use crate::edits;
-use crate::features::{line_numbers, OptionValueFunction};
+use crate::features::{OptionValueFunction, line_numbers};
 use crate::minusplus::*;
 use crate::paint::{BgFillMethod, BgShouldFill, LineSections, Painter};
 use crate::style::Style;
@@ -592,7 +592,7 @@ pub mod ansifill {
 pub mod tests {
     use crate::ansi::strip_ansi_codes;
     use crate::features::line_numbers::tests::*;
-    use crate::tests::integration_test_utils::{make_config_from_args, run_delta, DeltaTest};
+    use crate::tests::integration_test_utils::{DeltaTest, make_config_from_args, run_delta};
     use insta::assert_snapshot;
 
     #[test]

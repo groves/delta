@@ -73,12 +73,11 @@ fn parse_file_diff(lines: &[&str], start: usize) -> (FileDiff, usize) {
     }
 
     // If path is empty, try to extract from the diff --git line
-    if path.is_empty() {
-        if let Some(first) = header_lines.first() {
-            if first.starts_with("diff --git ") {
-                path = extract_path_from_diff_git(first);
-            }
-        }
+    if path.is_empty()
+        && let Some(first) = header_lines.first()
+        && first.starts_with("diff --git ")
+    {
+        path = extract_path_from_diff_git(first);
     }
 
     // Parse hunks
@@ -97,13 +96,7 @@ fn parse_file_diff(lines: &[&str], start: usize) -> (FileDiff, usize) {
         }
     }
 
-    (
-        FileDiff {
-            path,
-            hunks,
-        },
-        i,
-    )
+    (FileDiff { path, hunks }, i)
 }
 
 fn parse_hunk(
@@ -156,7 +149,10 @@ fn parse_hunk_header_coords(header: &str) -> (usize, usize) {
     // Parse @@ -x,y +a,b @@
     let plus_idx = header.find('+').unwrap_or(0);
     let rest = &header[plus_idx + 1..];
-    let end = rest.find(' ').or_else(|| rest.find('@')).unwrap_or(rest.len());
+    let end = rest
+        .find(' ')
+        .or_else(|| rest.find('@'))
+        .unwrap_or(rest.len());
     let coords = &rest[..end];
 
     let parts: Vec<&str> = coords.split(',').collect();
@@ -235,6 +231,9 @@ diff --git a/file.rs b/file.rs
     #[test]
     fn test_parse_hunk_header_coords() {
         assert_eq!(parse_hunk_header_coords("@@ -1,3 +1,4 @@"), (1, 4));
-        assert_eq!(parse_hunk_header_coords("@@ -10,5 +20,8 @@ fn foo()"), (20, 8));
+        assert_eq!(
+            parse_hunk_header_coords("@@ -10,5 +20,8 @@ fn foo()"),
+            (20, 8)
+        );
     }
 }

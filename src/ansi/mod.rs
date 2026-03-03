@@ -244,20 +244,32 @@ mod tests {
 
     #[test]
     fn test_strip_ansi_codes_osc_hyperlink() {
-        assert_eq!(strip_ansi_codes("\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/mod.rs\x1b]8;;\x1b\\\x1b[0m\n"),
-                   "src/ansi/mod.rs\n");
+        assert_eq!(
+            strip_ansi_codes(
+                "\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/mod.rs\x1b]8;;\x1b\\\x1b[0m\n"
+            ),
+            "src/ansi/mod.rs\n"
+        );
     }
 
     #[test]
     fn test_measure_text_width_osc_hyperlink() {
-        assert_eq!(measure_text_width("\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/mod.rs\x1b]8;;\x1b\\\x1b[0m"),
-                   measure_text_width("src/ansi/mod.rs"));
+        assert_eq!(
+            measure_text_width(
+                "\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/mod.rs\x1b]8;;\x1b\\\x1b[0m"
+            ),
+            measure_text_width("src/ansi/mod.rs")
+        );
     }
 
     #[test]
     fn test_measure_text_width_osc_hyperlink_non_ascii() {
-        assert_eq!(measure_text_width("\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/modバー.rs\x1b]8;;\x1b\\\x1b[0m"),
-                   measure_text_width("src/ansi/modバー.rs"));
+        assert_eq!(
+            measure_text_width(
+                "\x1b[38;5;4m\x1b]8;;file:///Users/dan/src/delta/src/ansi/mod.rs\x1b\\src/ansi/modバー.rs\x1b]8;;\x1b\\\x1b[0m"
+            ),
+            measure_text_width("src/ansi/modバー.rs")
+        );
     }
 
     #[test]

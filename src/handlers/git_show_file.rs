@@ -9,13 +9,14 @@ impl StateMachine<'_> {
         self.painter.emit()?;
         let mut handled_line = false;
         if matches!(self.state, State::Unknown) {
-            if let process::CallingProcess::GitShow(_, Some(filename)) =
-                &*process::calling_process()
-            {
-                self.state = State::GitShowFile;
-                self.painter.set_syntax(Some(filename));
-            } else {
-                return Ok(handled_line);
+            match &*process::calling_process() {
+                process::CallingProcess::GitShow(_, Some(filename)) => {
+                    self.state = State::GitShowFile;
+                    self.painter.set_syntax(Some(filename));
+                }
+                _ => {
+                    return Ok(handled_line);
+                }
             }
         }
         if matches!(self.state, State::GitShowFile) {

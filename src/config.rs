@@ -13,11 +13,11 @@ use crate::color::{self, ColorMode};
 use crate::delta::State;
 use crate::fatal;
 use crate::features::navigate;
-use crate::features::side_by_side::{self, ansifill, LeftRight};
+use crate::features::side_by_side::{self, LeftRight, ansifill};
 use crate::git_config::GitConfig;
 use crate::handlers;
-use crate::handlers::blame::parse_blame_line_numbers;
 use crate::handlers::blame::BlameLineNumbers;
+use crate::handlers::blame::parse_blame_line_numbers;
 use crate::minusplus::MinusPlus;
 use crate::paint::BgFillMethod;
 use crate::parse_styles;
@@ -401,8 +401,7 @@ impl From<cli::Opt> for Config {
             max_syntax_length: opt.max_syntax_length,
             merge_conflict_begin_symbol: opt.merge_conflict_begin_symbol,
             merge_conflict_ours_diff_header_style: styles["merge-conflict-ours-diff-header-style"],
-            merge_conflict_theirs_diff_header_style: styles
-                ["merge-conflict-theirs-diff-header-style"],
+            merge_conflict_theirs_diff_header_style: styles["merge-conflict-theirs-diff-header-style"],
             merge_conflict_end_symbol: opt.merge_conflict_end_symbol,
             minus_emph_style: styles["minus-emph-style"],
             minus_empty_line_marker_style: styles["minus-empty-line-marker-style"],

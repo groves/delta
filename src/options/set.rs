@@ -19,7 +19,7 @@ use crate::utils::bat::output::PagingMode;
 
 macro_rules! set_options {
     ([$( $field_ident:ident ),* ],
-    $opt:expr, $builtin_features:expr, $git_config:expr, $arg_matches:expr, $expected_option_name_map:expr, $check_names:expr) => {
+    $opt:expr_2021, $builtin_features:expr_2021, $git_config:expr_2021, $arg_matches:expr_2021, $expected_option_name_map:expr_2021, $check_names:expr_2021) => {
         let mut option_names = HashSet::new();
         $(
             let field_name = stringify!($field_ident);
@@ -72,10 +72,10 @@ pub fn set_options(
     arg_matches: &clap::ArgMatches,
     assets: HighlightingAssets,
 ) {
-    if let Some(git_config) = git_config {
-        if opt.no_gitconfig {
-            git_config.enabled = false;
-        }
+    if let Some(git_config) = git_config
+        && opt.no_gitconfig
+    {
+        git_config.enabled = false;
     }
     opt.navigate = opt.navigate || opt.env.navigate.is_some();
     if opt.syntax_theme.is_none() {
@@ -400,17 +400,17 @@ fn gather_features(
 
     if let Some(git_config) = git_config {
         // Gather features from [delta] section if --features was not passed.
-        if opt.features.is_none() {
-            if let Some(feature_string) = git_config.get::<String>("delta.features") {
-                for feature in split_feature_string(&feature_string) {
-                    gather_features_recursively(
-                        feature,
-                        &mut features,
-                        builtin_features,
-                        opt,
-                        git_config,
-                    )
-                }
+        if opt.features.is_none()
+            && let Some(feature_string) = git_config.get::<String>("delta.features")
+        {
+            for feature in split_feature_string(&feature_string) {
+                gather_features_recursively(
+                    feature,
+                    &mut features,
+                    builtin_features,
+                    opt,
+                    git_config,
+                )
             }
         }
         // Always gather builtin feature flags from [delta] section.
@@ -495,32 +495,20 @@ fn gather_builtin_features_recursively(
     }
     features.push_front(feature_string);
     if let Some(feature_data) = builtin_features.get(feature) {
-        if let Some(child_features_fn) = feature_data.get("features") {
-            if let ProvenancedOptionValue::DefaultValue(OptionValue::String(features_string)) =
+        if let Some(child_features_fn) = feature_data.get("features")
+            && let ProvenancedOptionValue::DefaultValue(OptionValue::String(features_string)) =
                 child_features_fn(opt, &None)
-            {
-                for child_feature in split_feature_string(&features_string) {
-                    gather_builtin_features_recursively(
-                        child_feature,
-                        features,
-                        builtin_features,
-                        opt,
-                    );
-                }
+        {
+            for child_feature in split_feature_string(&features_string) {
+                gather_builtin_features_recursively(child_feature, features, builtin_features, opt);
             }
         }
         for child_feature in builtin_features.keys() {
-            if let Some(child_features_fn) = feature_data.get(child_feature) {
-                if let ProvenancedOptionValue::DefaultValue(OptionValue::Boolean(true)) =
+            if let Some(child_features_fn) = feature_data.get(child_feature)
+                && let ProvenancedOptionValue::DefaultValue(OptionValue::Boolean(true)) =
                     child_features_fn(opt, &None)
-                {
-                    gather_builtin_features_recursively(
-                        child_feature,
-                        features,
-                        builtin_features,
-                        opt,
-                    );
-                }
+            {
+                gather_builtin_features_recursively(child_feature, features, builtin_features, opt);
             }
         }
     }
@@ -753,11 +741,12 @@ pub mod tests {
         // TODO: should set_options not be called on any feature flags?
         // assert_eq!(opt.diff_highlight, true);
         // assert_eq!(opt.diff_so_fancy, true);
-        assert!(opt
-            .features
-            .unwrap()
-            .split_whitespace()
-            .any(|s| s == "xxxyyyzzz"));
+        assert!(
+            opt.features
+                .unwrap()
+                .split_whitespace()
+                .any(|s| s == "xxxyyyzzz")
+        );
         assert_eq!(opt.file_added_label, "xxxyyyzzz");
         assert_eq!(opt.file_decoration_style, "black black");
         assert_eq!(opt.file_modified_label, "xxxyyyzzz");
@@ -834,9 +823,11 @@ pub mod tests {
         let term_width = 12;
 
         let assert_failure_containing = |x, errmsg| {
-            assert!(parse_width_specifier(x, term_width)
-                .unwrap_err()
-                .contains(errmsg));
+            assert!(
+                parse_width_specifier(x, term_width)
+                    .unwrap_err()
+                    .contains(errmsg)
+            );
         };
 
         assert_failure_containing("", "is not an integer");

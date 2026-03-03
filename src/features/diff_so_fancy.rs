@@ -1,5 +1,5 @@
-use crate::features::diff_highlight;
 use crate::features::OptionValueFunction;
+use crate::features::diff_highlight;
 
 pub fn make_feature() -> Vec<(String, OptionValueFunction)> {
     let mut feature = diff_highlight::_make_feature(true);

@@ -306,7 +306,9 @@ index 0123456..1234567 100644
         let output =
             integration_test_utils::run_delta(TRIPLE_DASH_AT_BEGINNING_OF_LINE_IN_CODE, &config);
         let output = strip_ansi_codes(&output);
-        assert!(output.contains("-- instance (Category p, Category q) => Category (p ∧ q) where\n"));
+        assert!(
+            output.contains("-- instance (Category p, Category q) => Category (p ∧ q) where\n")
+        );
     }
 
     #[test]

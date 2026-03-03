@@ -222,12 +222,12 @@ fn _make_process_from_less_path(
         p.env("LESSCHARSET", "UTF-8");
         p.env("LESSANSIENDCHARS", "mK");
 
-        if config.navigate {
-            if let Ok(hist_file) = navigate::copy_less_hist_file_and_append_navigate_regex(config) {
-                p.env("LESSHISTFILE", hist_file);
-                if config.show_themes {
-                    p.arg("+n");
-                }
+        if config.navigate
+            && let Ok(hist_file) = navigate::copy_less_hist_file_and_append_navigate_regex(config)
+        {
+            p.env("LESSHISTFILE", hist_file);
+            if config.show_themes {
+                p.arg("+n");
             }
         }
         Some(p)

@@ -313,13 +313,8 @@ pub fn format_blame_line_number(
     let mut result = String::new();
 
     // depends on defaults being set when parsing arguments
-    let line_number = if format.width.is_some() {
-        format::pad(
-            line_number,
-            format.width.unwrap(),
-            format.alignment_spec.unwrap(),
-            None,
-        )
+    let line_number = if let Some(width) = format.width {
+        format::pad(line_number, width, format.alignment_spec.unwrap(), None)
     } else {
         String::new()
     };
@@ -409,8 +404,7 @@ mod tests {
 
     #[test]
     fn test_blame_line_with_parens_in_name() {
-        let line =
-            "61f180c8 (Kangwook Lee (이강욱) 2021-06-09 23:33:59 +0900 130)     let mut output_type =";
+        let line = "61f180c8 (Kangwook Lee (이강욱) 2021-06-09 23:33:59 +0900 130)     let mut output_type =";
         let caps = BLAME_LINE_REGEX.captures(line).unwrap();
         assert_eq!(caps.get(2).unwrap().as_str(), "Kangwook Lee (이강욱)");
     }

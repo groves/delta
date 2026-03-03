@@ -54,7 +54,7 @@ where
 }
 
 pub mod errors {
-    pub use anyhow::{anyhow, Context, Error, Result};
+    pub use anyhow::{Context, Error, Result, anyhow};
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -70,16 +70,16 @@ fn main() -> std::io::Result<()> {
             dry_run,
         }) => return run_review(number, repo.as_deref(), dry_run, &args),
         Some(ReviewArgs::PrFromBookmark { repo, dry_run }) => {
-            return run_pr_from_bookmark(repo.as_deref(), dry_run, &args)
+            return run_pr_from_bookmark(repo.as_deref(), dry_run, &args);
         }
         None => {}
     }
 
     // No PR number: if stdin is a terminal and no delta-specific flags, launch local review.
-    if io::stdin().is_terminal() {
-        if let Some(dry_run) = parse_local_review_args(&args) {
-            return run_local_review(dry_run, &args);
-        }
+    if io::stdin().is_terminal()
+        && let Some(dry_run) = parse_local_review_args(&args)
+    {
+        return run_local_review(dry_run, &args);
     }
 
     // Do this first because both parsing all the input in `run_app()` and
@@ -210,7 +210,11 @@ fn run_local_review(dry_run: bool, args: &[OsString]) -> std::io::Result<()> {
 }
 
 #[cfg(not(tarpaulin_include))]
-fn run_pr_from_bookmark(repo: Option<&str>, dry_run: bool, args: &[OsString]) -> std::io::Result<()> {
+fn run_pr_from_bookmark(
+    repo: Option<&str>,
+    dry_run: bool,
+    args: &[OsString],
+) -> std::io::Result<()> {
     let (pr_number, inferred_repo) = match review::github::pr_number_for_current_bookmark(repo) {
         Ok(result) => result,
         Err(e) => {
@@ -223,7 +227,12 @@ fn run_pr_from_bookmark(repo: Option<&str>, dry_run: bool, args: &[OsString]) ->
 }
 
 #[cfg(not(tarpaulin_include))]
-fn run_review(pr_number: u64, repo: Option<&str>, dry_run: bool, args: &[OsString]) -> std::io::Result<()> {
+fn run_review(
+    pr_number: u64,
+    repo: Option<&str>,
+    dry_run: bool,
+    args: &[OsString],
+) -> std::io::Result<()> {
     // Build a delta Config for rendering (reuse theming, line numbers, etc.)
     // We pass the args through but strip the PR number and --repo flag so clap doesn't choke.
     let filtered_args: Vec<OsString> = {

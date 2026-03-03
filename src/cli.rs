@@ -1279,15 +1279,13 @@ impl Opt {
             Ok(matches) => {
                 // subcommands take precedence over diffs
                 let minus_file = matches.get_one::<PathBuf>("minus_file").map(PathBuf::from);
-                if let Some(subcmd) = &minus_file {
-                    if let Some(arg) = subcmd.to_str() {
-                        if subcommands::SUBCOMMANDS.contains(&arg) {
-                            let unreachable_error =
-                                Error::new(clap::error::ErrorKind::InvalidSubcommand);
-                            let (matches, subcmd) = subcommands::extract(args, unreachable_error);
-                            return Call::SubCommand(matches, subcmd);
-                        }
-                    }
+                if let Some(subcmd) = &minus_file
+                    && let Some(arg) = subcmd.to_str()
+                    && subcommands::SUBCOMMANDS.contains(&arg)
+                {
+                    let unreachable_error = Error::new(clap::error::ErrorKind::InvalidSubcommand);
+                    let (matches, subcmd) = subcommands::extract(args, unreachable_error);
+                    return Call::SubCommand(matches, subcmd);
                 }
 
                 match (
@@ -1329,11 +1327,11 @@ impl Opt {
             GitConfig::try_create(env)
         };
 
-        if let Some(path) = matches.get_one::<String>("config") {
-            if !path.is_empty() {
-                let path = Path::new(path);
-                final_config = Some(GitConfig::from_path(env, path, true));
-            }
+        if let Some(path) = matches.get_one::<String>("config")
+            && !path.is_empty()
+        {
+            let path = Path::new(path);
+            final_config = Some(GitConfig::from_path(env, path, true));
         }
 
         let opt = Self::from_clap_and_git_config(env, matches, final_config, assets);

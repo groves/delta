@@ -3,7 +3,7 @@ use std::cmp::min;
 use lazy_static::lazy_static;
 
 use crate::cli;
-use crate::config::{delta_unreachable, Config};
+use crate::config::{Config, delta_unreachable};
 use crate::delta::{DiffType, InMergeConflict, MergeParents, State, StateMachine};
 use crate::paint::{prepare, prepare_raw_line};
 use crate::style;

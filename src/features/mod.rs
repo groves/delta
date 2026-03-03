@@ -63,7 +63,7 @@ pub fn make_builtin_features() -> HashMap<String, BuiltinFeature> {
 /// The macro permits the values of a builtin feature to be specified as either (a) a git config
 /// entry or (b) a value, which may be computed from the other command line options (cli::Opt).
 macro_rules! builtin_feature {
-    ([$( ($option_name:expr, $type:ty, $git_config_key:expr, $opt:ident => $value:expr) ),*]) => {
+    ([$( ($option_name:expr_2021, $type:ty, $git_config_key:expr_2021, $opt:ident => $value:expr_2021) ),*]) => {
         vec![$(
             (
                 $option_name.to_string(),
@@ -176,8 +176,7 @@ pub mod tests {
 [delta]
     features = my-feature
 ";
-        let git_config_path =
-            "delta__test_feature_flag_on_command_line_does_not_replace_features_in_gitconfig.gitconfig";
+        let git_config_path = "delta__test_feature_flag_on_command_line_does_not_replace_features_in_gitconfig.gitconfig";
         assert_eq!(
             make_options_from_args_and_git_config(
                 &["--navigate", "--raw"],

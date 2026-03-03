@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::delta::DiffType;
 use crate::delta::State;
 use crate::features::line_numbers::{self, SideBySideLineWidth};
-use crate::features::side_by_side::{available_line_width, line_is_too_long, Left, Right};
+use crate::features::side_by_side::{Left, Right, available_line_width, line_is_too_long};
 use crate::minusplus::*;
 use crate::paint::LineSections;
 use crate::style::Style;
@@ -653,12 +653,12 @@ mod tests {
     use lazy_static::lazy_static;
     use syntect::highlighting::Style as SyntectStyle;
 
-    use super::wrap_line;
     use super::WrapConfig;
+    use super::wrap_line;
     use crate::config::Config;
     use crate::paint::LineSections;
     use crate::style::Style;
-    use crate::tests::integration_test_utils::{make_config_from_args, DeltaTest};
+    use crate::tests::integration_test_utils::{DeltaTest, make_config_from_args};
 
     lazy_static! {
         static ref S1: Style = Style {

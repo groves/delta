@@ -1,5 +1,5 @@
-use crate::features::raw;
 use crate::features::OptionValueFunction;
+use crate::features::raw;
 
 pub fn make_feature() -> Vec<(String, OptionValueFunction)> {
     _make_feature(false)

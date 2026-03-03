@@ -363,8 +363,7 @@ trait ProcessInterface {
 
         let process_start_time_difference_less_than_3s = |a, b| (a as i64 - b as i64).abs() < 3;
 
-        let cmdline_of_closest_matching_process = self
-            .processes()
+        self.processes()
             .iter()
             .filter(|(_, proc)| {
                 process_start_time_difference_less_than_3s(this_start_time, proc.start_time())
@@ -374,11 +373,10 @@ trait ProcessInterface {
                     let mut length_of_process_chain = usize::MAX;
 
                     let mut sum_distance = |pid, distance| {
-                        if length_of_process_chain == usize::MAX {
-                            if let Some(distance_to_first_common_parent) = pid_distances.get(&pid) {
-                                length_of_process_chain =
-                                    distance_to_first_common_parent + distance;
-                            }
+                        if length_of_process_chain == usize::MAX
+                            && let Some(distance_to_first_common_parent) = pid_distances.get(&pid)
+                        {
+                            length_of_process_chain = distance_to_first_common_parent + distance;
                         }
                     };
                     iter_parents(self, pid.as_u32(), &mut sum_distance);
@@ -392,9 +390,7 @@ trait ProcessInterface {
                 _ => None,
             })
             .min_by_key(|(distance, _)| *distance)
-            .map(|(_, result)| result);
-
-        cmdline_of_closest_matching_process
+            .map(|(_, result)| result)
     }
 }
 
@@ -458,10 +454,10 @@ where
             // are usually consecutive, so naively check if the process with `my_pid - 1` matches.
             ProcessArgs::OtherProcess if depth == 1 => {
                 let sibling = info.naive_sibling_process(current_pid);
-                if let Some(proc) = sibling {
-                    if let ProcessArgs::Args(result) = extract_args(proc.cmd()) {
-                        return Some(result);
-                    }
+                if let Some(proc) = sibling
+                    && let ProcessArgs::Args(result) = extract_args(proc.cmd())
+                {
+                    return Some(result);
                 }
             }
             // This check is not done for the parent's parent etc.
@@ -546,11 +542,11 @@ where
         if distance > 2000 {
             return;
         }
-        if let Some(proc) = info.process(pid) {
-            if let Some(pid) = proc.parent() {
-                f(pid, distance);
-                inner_iter_parents(info, pid, f, distance + 1)
-            }
+        if let Some(proc) = info.process(pid)
+            && let Some(pid) = proc.parent()
+        {
+            f(pid, distance);
+            inner_iter_parents(info, pid, f, distance + 1)
         }
     }
     inner_iter_parents(info, starting_pid, f, 1)
@@ -989,8 +985,7 @@ pub mod tests {
             Some(CallingProcess::GitBlame(no_options_command_line.clone()))
         );
 
-        let git_blame_command =
-            "git -c a=b blame -fnb --incremental -t --color-by-age -M --since=3.weeks --contents annotation.txt -C -C2 hello.txt";
+        let git_blame_command = "git -c a=b blame -fnb --incremental -t --color-by-age -M --since=3.weeks --contents annotation.txt -C -C2 hello.txt";
 
         // here -C2 is parsed as -C and -2. It doesn't really matters because we only use last_arg from options
         // to determine the file type.

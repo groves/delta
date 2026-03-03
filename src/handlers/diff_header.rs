@@ -470,7 +470,7 @@ pub fn get_file_change_description_from_file_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::integration_test_utils::{make_config_from_args, DeltaTest};
+    use crate::tests::integration_test_utils::{DeltaTest, make_config_from_args};
     use insta::assert_snapshot;
 
     #[test]
@@ -637,7 +637,8 @@ mod tests {
         );
         assert_eq!(
             get_repeated_file_path_from_diff_line(
-                "diff --git a/.config/Code - Insiders/User/settings.json b/.config/Code - Insiders/User/settings.json"),
+                "diff --git a/.config/Code - Insiders/User/settings.json b/.config/Code - Insiders/User/settings.json"
+            ),
             Some(".config/Code - Insiders/User/settings.json".to_string())
         );
         assert_eq!(

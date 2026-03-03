@@ -62,14 +62,16 @@ pub mod ansi_test_utils {
         expected_style: &str,
         config: &Config,
     ) {
-        assert!(_line_get_substring_matching_style(
-            output,
-            line_number,
-            expected_prefix,
-            expected_style,
-            config,
-        )
-        .is_none());
+        assert!(
+            _line_get_substring_matching_style(
+                output,
+                line_number,
+                expected_prefix,
+                expected_style,
+                config,
+            )
+            .is_none()
+        );
     }
 
     pub fn assert_line_does_not_have_style(

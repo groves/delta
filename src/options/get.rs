@@ -44,12 +44,12 @@ pub fn get_themes(git_config: Option<git_config::GitConfig>) -> Vec<String> {
     let mut themes: Vec<String> = Vec::new();
     let git_config = git_config.unwrap();
     git_config.for_each(GIT_CONFIG_THEME_REGEX, |name, _| {
-        if let Some(name) = name.strip_prefix("delta.") {
-            if let Some((name, _)) = name.rsplit_once('.') {
-                let name = name.to_owned();
-                if !themes.contains(&name) {
-                    themes.push(name);
-                }
+        if let Some(name) = name.strip_prefix("delta.")
+            && let Some((name, _)) = name.rsplit_once('.')
+        {
+            let name = name.to_owned();
+            if !themes.contains(&name) {
+                themes.push(name);
             }
         }
     });
@@ -70,10 +70,10 @@ pub trait GetOptionValue {
         Self: From<OptionValue>,
         Self: Into<OptionValue>,
     {
-        if let Some(git_config) = git_config {
-            if let Some(value) = git_config.get::<Self>(&format!("delta.{option_name}")) {
-                return Some(value);
-            }
+        if let Some(git_config) = git_config
+            && let Some(value) = git_config.get::<Self>(&format!("delta.{option_name}"))
+        {
+            return Some(value);
         }
         if let Some(features) = &opt.features {
             for feature in features.split_whitespace().rev() {
@@ -109,15 +109,15 @@ pub trait GetOptionValue {
         Self: GitConfigGet,
         Self: Into<OptionValue>,
     {
-        if let Some(git_config) = git_config {
-            if let Some(value) = git_config.get::<Self>(&format!("delta.{feature}.{option_name}")) {
-                return Some(GitConfigValue(value.into()));
-            }
+        if let Some(git_config) = git_config
+            && let Some(value) = git_config.get::<Self>(&format!("delta.{feature}.{option_name}"))
+        {
+            return Some(GitConfigValue(value.into()));
         }
-        if let Some(builtin_feature) = builtin_features.get(feature) {
-            if let Some(value_function) = builtin_feature.get(option_name) {
-                return Some(value_function(opt, git_config));
-            }
+        if let Some(builtin_feature) = builtin_features.get(feature)
+            && let Some(value_function) = builtin_feature.get(option_name)
+        {
+            return Some(value_function(opt, git_config));
         }
         None
     }
