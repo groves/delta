@@ -15,43 +15,43 @@ name = "drev"
 path = "src/main.rs"
 
 [dependencies]
-ansi_colours = "1.2.1"
+ansi_colours = "1.2.2"
 ansi_term = "0.12.1"
-anstyle-parse = "0.2.3"
-anyhow = "1.0.70"
+anstyle-parse = "1.0.0"
+anyhow = "1.0.79"
 bat = { version = "0.24.0", default-features = false, features = [
     "minimal-application",
     "paging",
     "regex-onig",
 ] }
-bitflags = "2.2.1"
+bitflags = "2.4.1"
 box_drawing = "0.1.2"
 bytelines = { version = "2.5.0", default-features = false }
-chrono = "0.4.26"
-chrono-humanize = "0.2.2"
-clap_complete = "4.4.4"
-clap = { version = "4.3.14", features = [
+chrono = "0.4.31"
+chrono-humanize = "0.2.3"
+clap_complete = "4.4.6"
+clap = { version = "4.4.13", features = [
     "derive",
     "help",
     "usage",
     "error-context",
 ] }
-console = "0.15.0"
-ctrlc = "3.2.5"
+console = "0.16.2"
+ctrlc = "3.4.2"
 dirs = "6.0.0"
 git2 = { version = "0.20.0", default-features = false, features = [] }
-grep-cli = "0.1.8"
+grep-cli = "0.1.10"
 itertools = "0.10.5"
 lazy_static = "1.4"
-palette = "0.7.2"
+palette = "0.7.3"
 pathdiff = "0.2.1"
-regex = "1.7.1"
-serde_json = "1.0.96"
+regex = "1.10.2"
+serde_json = "1.0.111"
 sha2 = "0.10"
-serde = { version = "1.0.163", features = ["derive"] }
-shell-words = "1.0.0"
-smol_str = "0.1.24"
-syntect = "5.0.0"
+serde = { version = "1.0.194", features = ["derive"] }
+shell-words = "1.1.0"
+smol_str = "0.3.5"
+syntect = "5.2.0"
 # sysinfo: no default features to disable the use of threads
 sysinfo = { version = "0.29.0", default-features = false, features = [] }
 terminal-colorsaurus = "0.4.8"
@@ -69,8 +69,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
 
 [dev-dependencies]
 insta = { version = "1.*", features = ["colors", "filters"] }
-rstest = "0.21.0"
-pretty_assertions = "1.4"
+rstest = "0.26.1"
+pretty_assertions = "1.4.1"
 
 [profile.test]
 opt-level = 2
