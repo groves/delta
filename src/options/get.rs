@@ -38,8 +38,10 @@ where
     T::get_option_value(option_name, builtin_features, opt, git_config)
 }
 
+#[cfg(test)]
 static GIT_CONFIG_THEME_REGEX: &str = r"^delta\.(.+)\.(light|dark)$";
 
+#[cfg(test)]
 pub fn get_themes(git_config: Option<git_config::GitConfig>) -> Vec<String> {
     let mut themes: Vec<String> = Vec::new();
     let git_config = git_config.unwrap();

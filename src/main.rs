@@ -2,7 +2,6 @@ mod align;
 mod ansi;
 mod cli;
 mod color;
-mod colors;
 mod config;
 mod delta;
 mod edits;

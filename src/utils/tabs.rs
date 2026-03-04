@@ -11,9 +11,6 @@ impl TabCfg {
             replacement: " ".repeat(width),
         }
     }
-    pub fn width(&self) -> usize {
-        self.replacement.len()
-    }
     pub fn replace(&self) -> bool {
         !self.replacement.is_empty()
     }

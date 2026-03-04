@@ -28,7 +28,6 @@ pub enum CallingProcess {
 // To keep the interface simple, store it here:
 static CALLER_INFO_SOURCE: AtomicUsize = AtomicUsize::new(CALLER_GUESSED);
 const CALLER_GUESSED: usize = 1;
-const CALLER_KNOWN: usize = 2;
 
 impl CallingProcess {
     pub fn paths_in_input_are_relative_to_cwd(&self) -> bool {
@@ -77,18 +76,6 @@ pub fn start_determining_calling_process_in_thread() {
             determine_done.notify_all();
         })
         .unwrap();
-}
-
-// delta starts the process, so it is known.
-pub fn set_calling_process(args: &[String]) {
-    if let ProcessArgs::Args(result) = describe_calling_process(args) {
-        let (caller_mutex, determine_done) = &**CALLER;
-
-        let mut caller = caller_mutex.lock().unwrap();
-        *caller = result;
-        CALLER_INFO_SOURCE.store(CALLER_KNOWN, DELTA_ATOMIC_ORDERING);
-        determine_done.notify_all();
-    }
 }
 
 #[cfg(not(test))]

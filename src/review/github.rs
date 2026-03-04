@@ -9,7 +9,7 @@ pub struct PrMetadata {
     pub head_sha: String,
 }
 
-pub fn fetch_pr_diff(pr_number: u64, repo: Option<&str>) -> Result<String> {
+pub fn fetch_pr_diff(pr_number: u64, repo: Option<&str>, head_sha: &str) -> Result<String> {
     let mut cmd = Command::new("gh");
     cmd.args(["pr", "diff", &pr_number.to_string()]);
 
@@ -21,12 +21,32 @@ pub fn fetch_pr_diff(pr_number: u64, repo: Option<&str>) -> Result<String> {
         .output()
         .context("Failed to execute `gh pr diff`. Is the GitHub CLI (`gh`) installed?")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("gh pr diff failed: {}", stderr.trim()));
+    if output.status.success() {
+        return String::from_utf8(output.stdout).context("PR diff is not valid UTF-8");
     }
 
-    String::from_utf8(output.stdout).context("PR diff is not valid UTF-8")
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    eprintln!(
+        "gh pr diff failed ({}), falling back to jj diff",
+        stderr.trim()
+    );
+
+    fetch_jj_diff_to_main(head_sha)
+}
+
+fn fetch_jj_diff_to_main(head_sha: &str) -> Result<String> {
+    let fork_point = format!("latest(heads(::main & ::{}))", head_sha);
+    let output = Command::new("jj")
+        .args(["diff", "--git", "--from", &fork_point, "--to", head_sha])
+        .output()
+        .context("Failed to execute `jj diff`. Is `jj` installed?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("jj diff failed: {}", stderr.trim()));
+    }
+
+    String::from_utf8(output.stdout).context("jj diff output is not valid UTF-8")
 }
 
 pub fn fetch_pr_metadata(pr_number: u64, repo: Option<&str>) -> Result<PrMetadata> {
@@ -295,7 +315,7 @@ pub fn create_pr_review(
 
     let body = serde_json::json!({
         "commit_id": head_sha,
-        "event": "COMMENT",
+        "event": "PENDING",
         "comments": review_comments,
     });
 
@@ -326,13 +346,12 @@ pub fn create_pr_review(
         return Err(anyhow!("gh api review failed: {}", stderr.trim()));
     }
 
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("Failed to parse review response JSON")?;
-
-    let url = json["html_url"]
-        .as_str()
-        .ok_or_else(|| anyhow!("No html_url in review response"))?
-        .to_string();
+    // PENDING reviews don't have a useful html_url — point the user at the
+    // PR's "Files changed" tab where they can finalize the review.
+    let url = format!(
+        "https://github.com/{}/pull/{}/files",
+        repo, pr_number
+    );
 
     Ok(url)
 }

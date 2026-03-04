@@ -21,7 +21,6 @@ anstyle-parse = "1.0.0"
 anyhow = "1.0.79"
 bat = { version = "0.24.0", default-features = false, features = [
     "minimal-application",
-    "paging",
     "regex-onig",
 ] }
 bitflags = "2.4.1"
@@ -47,7 +46,6 @@ regex = "1.10.2"
 serde_json = "1.0.111"
 sha2 = "0.10"
 serde = { version = "1.0.194", features = ["derive"] }
-shell-words = "1.1.0"
 smol_str = "0.3.5"
 syntect = "5.2.0"
 # sysinfo: no default features to disable the use of threads
@@ -60,7 +58,6 @@ unicode-width = ">=0.1.14, <0.2.0"
 ratatui = "0.29"
 crossterm = "0.28"
 ansi-to-tui = "7"
-xdg = "2.4.1"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

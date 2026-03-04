@@ -196,6 +196,7 @@ fn strip_ansi_codes_from_strings_iterator<'a>(
         .join("")
 }
 
+#[cfg(test)]
 pub fn explain_ansi(line: &str, colorful: bool) -> String {
     use crate::style::Style;
 

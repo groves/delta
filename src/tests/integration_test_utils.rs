@@ -386,7 +386,6 @@ ignored!  2
     fn test_delta_test() {
         let input = "@@ -1,1 +1,1 @@ fn foo() {\n-1\n+2\n";
         DeltaTest::with_args(&["--raw"])
-            .set_config(|c| c.pager = None)
             .set_config(|c| c.line_numbers = true)
             .with_input(input)
             .expect(

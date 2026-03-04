@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use ratatui::text::Text;
+use serde::{Deserialize, Serialize};
 
 use super::github::PrMetadata;
 
@@ -12,6 +13,7 @@ pub struct ReviewHunk {
     pub raw_segment: String,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PendingComment {
     pub path: String,
     pub line: usize,
@@ -29,6 +31,8 @@ pub struct App {
     /// Starting line offset of each hunk in the concatenated view.
     pub hunk_line_offsets: Vec<u16>,
     pub pending_comments: Vec<PendingComment>,
+    /// Transient status message shown in the status bar; cleared on next key input.
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -43,10 +47,11 @@ impl App {
             show_help: false,
             hunk_line_offsets: Vec::new(),
             pending_comments: Vec::new(),
+            status_message: None,
         };
         // Auto-mark lock files as viewed.
         for hunk in &app.hunks {
-            if hunk.file_path.ends_with(".lock") {
+            if super::is_lockfile(&hunk.file_path) {
                 app.viewed.insert(hunk.content_hash.clone());
             }
         }
@@ -311,6 +316,91 @@ impl App {
         true
     }
 
+    /// Open $EDITOR for the user to type an instruction, then copy a
+    /// `cd <repo> && claude '<prompt>'` command to the clipboard so the user
+    /// can paste it into a new terminal window. Non-blocking: drev stays open.
+    pub fn ask_claude(&mut self) -> bool {
+        let hunk = match self.current_hunk() {
+            Some(h) => h,
+            None => return false,
+        };
+        let raw_segment = hunk.raw_segment.clone();
+        let file_path = hunk.file_path.clone();
+        let plus_start = hunk.plus_start;
+
+        // Template: hunk shown as comments for reference; user writes below.
+        let mut template = String::new();
+        template.push_str(&format!("# Hunk from {}:{}\n", file_path, plus_start));
+        for line in raw_segment.lines() {
+            template.push_str("# ");
+            template.push_str(line);
+            template.push('\n');
+        }
+        template.push_str(
+            "#\n# Write your instruction for Claude below. Lines starting with # are ignored.\n\n",
+        );
+
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let tmp_path = format!("{}/drev-claude-{}", tmp_dir, std::process::id());
+        if std::fs::write(&tmp_path, &template).is_err() {
+            return false;
+        }
+
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+        let status = std::process::Command::new(&editor).arg(&tmp_path).status();
+        if !matches!(status, Ok(s) if s.success()) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return false;
+        }
+
+        let contents = match std::fs::read_to_string(&tmp_path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let instruction: String = contents
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+
+        if instruction.is_empty() {
+            self.status_message = Some("ask claude: no instruction given".to_string());
+            return false;
+        }
+
+        let prompt = format!(
+            "I'm reviewing a pull request. Here's a hunk from `{}`:\n\n```diff\n{}\n```\n\n{}",
+            file_path,
+            raw_segment.trim_end(),
+            instruction,
+        );
+
+        let command = match super::github::repo_root() {
+            Some(root) => format!(
+                "cd {} && claude {}\n",
+                shell_single_quote(&root),
+                shell_single_quote(&prompt),
+            ),
+            None => format!("claude {}\n", shell_single_quote(&prompt)),
+        };
+
+        if copy_to_clipboard(&command) {
+            self.status_message = Some(format!(
+                "copied claude command for {} — paste into a new terminal",
+                file_path
+            ));
+            true
+        } else {
+            self.status_message =
+                Some("ask claude: failed to copy to clipboard (pbcopy not available?)".to_string());
+            false
+        }
+    }
+
     /// Submit all pending comments as a single GitHub review.
     /// Returns the review URL on success.
     pub fn submit_review(&mut self) -> Option<String> {
@@ -337,6 +427,38 @@ impl App {
             .filter(|h| self.viewed.contains(&h.content_hash))
             .count()
     }
+}
+
+/// POSIX single-quote a string: wrap in `'…'`, escaping any `'` as `'\''`.
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Pipe `text` into `pbcopy`. Returns true on success.
+fn copy_to_clipboard(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = match Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    if let Some(mut stdin) = child.stdin.take()
+        && stdin.write_all(text.as_bytes()).is_err()
+    {
+        return false;
+    }
+    matches!(child.wait(), Ok(s) if s.success())
 }
 
 /// Find the line number of the first `+` (added) line in the hunk's raw diff.

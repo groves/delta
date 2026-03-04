@@ -8,8 +8,6 @@ const DELTA_FEATURES: &str = "DELTA_FEATURES";
 const DELTA_NAVIGATE: &str = "DELTA_NAVIGATE";
 const DELTA_EXPERIMENTAL_MAX_LINE_DISTANCE_FOR_NAIVELY_PAIRED_LINES: &str =
     "DELTA_EXPERIMENTAL_MAX_LINE_DISTANCE_FOR_NAIVELY_PAIRED_LINES";
-const DELTA_PAGER: &str = "DELTA_PAGER";
-
 #[derive(Default, Clone)]
 pub struct DeltaEnv {
     pub bat_theme: Option<String>,
@@ -21,7 +19,6 @@ pub struct DeltaEnv {
     pub git_prefix: Option<String>,
     pub hostname: Option<String>,
     pub navigate: Option<String>,
-    pub pagers: (Option<String>, Option<String>),
 }
 
 impl DeltaEnv {
@@ -38,14 +35,6 @@ impl DeltaEnv {
         let navigate = env::var(DELTA_NAVIGATE).ok();
 
         let current_dir = env::current_dir().ok();
-        let pagers = (
-            env::var(DELTA_PAGER).ok(),
-            // We're using `bat::config::get_pager_executable` here instead of just returning
-            // the pager from the environment variables, because we want to make sure
-            // that the pager is a valid pager from env and handle the case of
-            // the PAGER being set to something invalid like "most" and "more".
-            bat::config::get_pager_executable(None),
-        );
 
         Self {
             bat_theme,
@@ -57,7 +46,6 @@ impl DeltaEnv {
             git_prefix,
             hostname,
             navigate,
-            pagers,
         }
     }
 }
@@ -87,37 +75,5 @@ pub mod tests {
         assert_eq!(env.features, Some(feature.into()));
         // otherwise `current_dir` is not used in the test cfg:
         assert_eq!(env.current_dir, env::current_dir().ok());
-    }
-
-    #[test]
-    fn test_env_parsing_with_pager_set_to_bat() {
-        let _guard = ENV_ACCESS.lock().unwrap();
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { env::set_var("PAGER", "bat") };
-        let env = DeltaEnv::init();
-        assert_eq!(
-            env.pagers.1,
-            Some("bat".into()),
-            "Expected env.pagers.1 == Some(bat) but was {:?}",
-            env.pagers.1
-        );
-    }
-
-    #[test]
-    fn test_env_parsing_with_pager_set_to_more() {
-        let _guard = ENV_ACCESS.lock().unwrap();
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { env::set_var("PAGER", "more") };
-        let env = DeltaEnv::init();
-        assert_eq!(env.pagers.1, Some("less".into()));
-    }
-
-    #[test]
-    fn test_env_parsing_with_pager_set_to_most() {
-        let _guard = ENV_ACCESS.lock().unwrap();
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { env::set_var("PAGER", "most") };
-        let env = DeltaEnv::init();
-        assert_eq!(env.pagers.1, Some("less".into()));
     }
 }

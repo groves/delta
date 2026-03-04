@@ -16,7 +16,6 @@ use crate::env::DeltaEnv;
 use crate::git_config::GitConfig;
 use crate::options;
 use crate::utils;
-use crate::utils::bat::output::PagingMode;
 
 const TERM_FALLBACK_WIDTH: usize = 79;
 
@@ -1130,7 +1129,6 @@ pub struct ComputedValues {
     pub decorations_width: Width,
     pub inspect_raw_lines: InspectRawLines,
     pub color_mode: ColorMode,
-    pub paging_mode: PagingMode,
     pub syntax_set: SyntaxSet,
     pub syntax_theme: Option<SyntaxTheme>,
     pub true_color: bool,
@@ -1259,6 +1257,7 @@ impl Opt {
         (call, Some(opt))
     }
 
+    #[cfg(test)]
     pub fn from_iter_and_git_config<I>(
         env: &DeltaEnv,
         iter: I,

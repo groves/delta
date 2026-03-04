@@ -145,6 +145,7 @@ impl GitConfig {
         self.remote_url.get_or_init(|| self.get_remote_url_impl())
     }
 
+    #[cfg(test)]
     pub fn for_each<F>(&self, regex: &str, mut f: F)
     where
         F: FnMut(&str, Option<&str>),

@@ -16,10 +16,11 @@ use self::app::ReviewHunk;
 use self::diff_parser::FileDiff;
 
 pub fn run(pr_number: u64, repo: Option<&str>, config: &Config, dry_run: bool) -> Result<()> {
-    let diff_text = github::fetch_pr_diff(pr_number, repo).context("Failed to fetch PR diff")?;
-
     let metadata =
         github::fetch_pr_metadata(pr_number, repo).context("Failed to fetch PR metadata")?;
+
+    let diff_text = github::fetch_pr_diff(pr_number, repo, &metadata.head_sha)
+        .context("Failed to fetch PR diff")?;
 
     let file_diffs = diff_parser::parse_diff(&diff_text);
 
@@ -40,9 +41,17 @@ pub fn run(pr_number: u64, repo: Option<&str>, config: &Config, dry_run: bool) -
 
     let mut app = app::App::new(review_hunks, viewed, metadata);
 
+    let pending = state::load_pending_comments(&app.pr_metadata.repo, app.pr_metadata.number)?;
+    app.pending_comments = pending;
+
     tui::run_tui(&mut app)?;
 
     state::save_viewed_state(&app.viewed)?;
+    state::save_pending_comments(
+        &app.pr_metadata.repo,
+        app.pr_metadata.number,
+        &app.pending_comments,
+    )?;
 
     Ok(())
 }
@@ -107,6 +116,11 @@ fn strip_osc_sequences(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+pub(crate) fn is_lockfile(path: &str) -> bool {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    basename.ends_with(".lock") || basename == "package-lock.json" || basename == "pnpm-lock.yaml"
+}
+
 fn render_hunks(file_diffs: &[FileDiff], config: &Config) -> Result<Vec<ReviewHunk>> {
     let mut review_hunks = Vec::new();
 
@@ -142,5 +156,27 @@ fn render_hunks(file_diffs: &[FileDiff], config: &Config) -> Result<Vec<ReviewHu
         }
     }
 
-    Ok(review_hunks)
+    Ok(collapse_lockfile_hunks(review_hunks))
+}
+
+/// Merge consecutive hunks belonging to the same lockfile into a single hunk so the
+/// reviewer doesn't have to step through dozens of collapsed lockfile summaries.
+fn collapse_lockfile_hunks(hunks: Vec<ReviewHunk>) -> Vec<ReviewHunk> {
+    let mut out: Vec<ReviewHunk> = Vec::with_capacity(hunks.len());
+    for hunk in hunks {
+        let merge = is_lockfile(&hunk.file_path)
+            && out
+                .last()
+                .map(|h| h.file_path == hunk.file_path)
+                .unwrap_or(false);
+        if merge {
+            let last = out.last_mut().unwrap();
+            last.rendered.lines.extend(hunk.rendered.lines);
+            last.raw_segment.push_str(&hunk.raw_segment);
+            last.content_hash = format!("{}+{}", last.content_hash, hunk.content_hash);
+        } else {
+            out.push(hunk);
+        }
+    }
+    out
 }

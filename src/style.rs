@@ -6,7 +6,6 @@ use lazy_static::lazy_static;
 
 use crate::ansi;
 use crate::color;
-use crate::git_config::GitConfig;
 
 // PERF: Avoid deriving Copy here?
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -130,25 +129,9 @@ impl Style {
         None
     }
 
+    #[cfg(test)]
     pub fn to_painted_string(self) -> ansi_term::ANSIGenericString<'static, str> {
         self.paint(self.to_string())
-    }
-}
-
-/// Interpret `color_string` as a color specifier and return it painted accordingly.
-pub fn paint_color_string<'a>(
-    color_string: &'a str,
-    true_color: bool,
-    git_config: Option<&GitConfig>,
-) -> ansi_term::ANSIGenericString<'a, str> {
-    if let Some(color) = color::parse_color(color_string, true_color, git_config) {
-        let style = ansi_term::Style {
-            background: Some(color),
-            ..ansi_term::Style::default()
-        };
-        style.paint(color_string)
-    } else {
-        ansi_term::ANSIGenericString::from(color_string)
     }
 }
 

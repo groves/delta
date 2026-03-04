@@ -12,7 +12,6 @@ use crate::cli;
 use crate::color::{self, ColorMode};
 use crate::delta::State;
 use crate::fatal;
-use crate::features::navigate;
 use crate::features::side_by_side::{self, LeftRight, ansifill};
 use crate::git_config::GitConfig;
 use crate::handlers;
@@ -25,7 +24,6 @@ use crate::style;
 use crate::style::Style;
 use crate::tests::TESTING;
 use crate::utils;
-use crate::utils::bat::output::PagingMode;
 use crate::utils::regex_replacement::RegexReplacement;
 use crate::wrapping::WrapConfig;
 
@@ -54,7 +52,6 @@ pub struct Config {
     pub decorations_width: cli::Width,
     pub default_language: String,
     pub diff_stat_align_width: usize,
-    pub error_exit_code: i32,
     pub file_added_label: String,
     pub file_copied_label: String,
     pub file_modified_label: String,
@@ -111,18 +108,14 @@ pub struct Config {
     pub minus_empty_line_marker_style: Style,
     pub minus_non_emph_style: Style,
     pub minus_style: Style,
-    pub navigate_regex: Option<String>,
     pub navigate: bool,
     pub null_style: Style,
     pub null_syntect_style: SyntectStyle,
-    pub pager: Option<String>,
-    pub paging_mode: PagingMode,
     pub plus_emph_style: Style,
     pub plus_empty_line_marker_style: Style,
     pub plus_non_emph_style: Style,
     pub plus_style: Style,
     pub relative_paths: bool,
-    pub show_themes: bool,
     pub side_by_side_data: side_by_side::SideBySideData,
     pub side_by_side: bool,
     pub syntax_set: SyntaxSet,
@@ -244,21 +237,6 @@ impl From<cli::Opt> for Config {
             side_by_side_data,
         );
 
-        let navigate_regex = if (opt.navigate || opt.show_themes)
-            && (opt.navigate_regex.is_none() || opt.navigate_regex == Some("".to_string()))
-        {
-            Some(navigate::make_navigate_regex(
-                opt.show_themes,
-                &file_modified_label,
-                &file_added_label,
-                &file_removed_label,
-                &file_renamed_label,
-                &hunk_label,
-            ))
-        } else {
-            opt.navigate_regex
-        };
-
         let grep_output_type = match opt.grep_output_type.as_deref() {
             Some("ripgrep") => Some(GrepType::Ripgrep),
             Some("classic") => Some(GrepType::Classic),
@@ -299,7 +277,6 @@ impl From<cli::Opt> for Config {
             decorations_width: opt.computed.decorations_width,
             default_language: opt.default_language,
             diff_stat_align_width: opt.diff_stat_align_width,
-            error_exit_code: 2, // Use 2 for error because diff uses 0 and 1 for non-error.
             file_added_label,
             file_copied_label,
             file_modified_label,
@@ -404,11 +381,8 @@ impl From<cli::Opt> for Config {
             minus_non_emph_style: styles["minus-non-emph-style"],
             minus_style: styles["minus-style"],
             navigate: opt.navigate,
-            navigate_regex,
             null_style: Style::new(),
             null_syntect_style: SyntectStyle::default(),
-            pager: opt.pager,
-            paging_mode: opt.computed.paging_mode,
             plus_emph_style: styles["plus-emph-style"],
             plus_empty_line_marker_style: styles["plus-empty-line-marker-style"],
             plus_non_emph_style: styles["plus-non-emph-style"],
@@ -416,7 +390,6 @@ impl From<cli::Opt> for Config {
             git_minus_style: styles["git-minus-style"],
             git_plus_style: styles["git-plus-style"],
             relative_paths: opt.relative_paths,
-            show_themes: opt.show_themes,
             side_by_side: opt.side_by_side && !handlers::hunk::is_word_diff(),
             side_by_side_data,
             styles_map,
@@ -470,7 +443,6 @@ pub const HEADER_LEN: usize = 7;
 pub mod tests {
     use crate::cli;
     use crate::tests::integration_test_utils;
-    use crate::utils::bat::output::PagingMode;
     use std::fs::remove_file;
 
     #[test]
@@ -493,7 +465,6 @@ pub mod tests {
         assert_eq!(config.decorations_width, cli::Width::Fixed(100));
         assert!(config.background_color_extends_to_terminal_width);
         assert_eq!(config.inspect_raw_lines, cli::InspectRawLines::True);
-        assert_eq!(config.paging_mode, PagingMode::Never);
         assert!(config.syntax_theme.is_none());
         // syntax_set doesn't depend on gitconfig.
         remove_file(git_config_path).unwrap();

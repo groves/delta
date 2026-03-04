@@ -45,8 +45,9 @@ fn run_event_loop(
             if key.code == KeyCode::Char('e')
                 || key.code == KeyCode::Char('c')
                 || key.code == KeyCode::Char('S')
+                || key.code == KeyCode::Char('a')
             {
-                // Leave TUI, run editor/comment/submit, then restore and force full redraw.
+                // Leave TUI, run editor/comment/submit/ask-claude, then restore and force full redraw.
                 disable_raw_mode().ok();
                 stdout().execute(LeaveAlternateScreen).ok();
                 match key.code {
@@ -55,6 +56,9 @@ fn run_event_loop(
                     }
                     KeyCode::Char('S') => {
                         app.submit_review();
+                    }
+                    KeyCode::Char('a') => {
+                        app.ask_claude();
                     }
                     _ => {
                         app.open_in_editor();
@@ -79,6 +83,9 @@ fn run_event_loop(
 /// Handle a single key event, updating app state. Extracted so tests can drive
 /// the app without a real terminal.
 fn handle_key(key: KeyEvent, app: &mut App) {
+    // Any key press dismisses a transient status message.
+    app.status_message = None;
+
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
     }
@@ -218,7 +225,9 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
-    let file_info = if let Some(hunk) = app.current_hunk() {
+    let primary_text = if let Some(msg) = &app.status_message {
+        format!(" {}", msg)
+    } else if let Some(hunk) = app.current_hunk() {
         let viewed_marker = if app.is_current_viewed() {
             " [viewed]"
         } else {
@@ -230,17 +239,17 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let status =
-        Paragraph::new(file_info).style(Style::default().fg(Color::White).bg(Color::DarkGray));
+        Paragraph::new(primary_text).style(Style::default().fg(Color::White).bg(Color::DarkGray));
     frame.render_widget(status, status_chunks[0]);
 
     let hints_text = if app.pr_metadata.repo.is_empty() {
-        " n/p:hunk  j/k:scroll  space:viewed  e:editor  ?:help  q:quit".to_string()
+        " n/p:hunk  j/k:scroll  space:viewed  e:editor  a:claude  ?:help  q:quit".to_string()
     } else if app.pending_comments.is_empty() {
-        " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  g:github  ?:help  q:quit"
+        " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  a:claude  g:github  ?:help  q:quit"
             .to_string()
     } else {
         format!(
-            " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  S:submit({})  g:github  ?:help  q:quit",
+            " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  a:claude  S:submit({})  g:github  ?:help  q:quit",
             app.pending_comments.len()
         )
     };
@@ -250,7 +259,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let help_width = 50.min(area.width.saturating_sub(4));
-    let help_height = 16.min(area.height.saturating_sub(4));
+    let help_height = 17.min(area.height.saturating_sub(4));
 
     let help_area = Rect {
         x: (area.width - help_width) / 2,
@@ -274,6 +283,7 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("e            Open in $EDITOR"),
         Line::from("c            Comment on hunk (PR only)"),
         Line::from("S            Submit review (PR only)"),
+        Line::from("a            Copy claude command (pbcopy)"),
         Line::from("g            Open in GitHub"),
         Line::from("q / Esc      Quit"),
     ];

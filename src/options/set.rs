@@ -15,7 +15,6 @@ use crate::features;
 use crate::git_config::GitConfig;
 use crate::options::option_value::{OptionValue, ProvenancedOptionValue};
 use crate::options::theme;
-use crate::utils::bat::output::PagingMode;
 
 macro_rules! set_options {
     ([$( $field_ident:ident ),* ],
@@ -45,6 +44,11 @@ macro_rules! set_options {
                 "diff-so-fancy", // Does not exist as a flag on config
                 "detect-dark-light", // Does not exist as a flag on config
                 "features",  // Processed differently
+                "navigate-regex", // No longer read from Config
+                "pager", // No longer read from Config
+                "paging", // No longer read from Config
+                "show-colors", // No longer read from Config
+                "show-themes", // No longer read from Config
                 // Set prior to the rest
                 "no-gitconfig",
                 "dark",
@@ -189,7 +193,6 @@ pub fn set_options(
             minus_non_emph_style,
             minus_non_emph_style,
             navigate,
-            navigate_regex,
             line_fill_method,
             line_numbers,
             line_numbers_left_format,
@@ -199,8 +202,6 @@ pub fn set_options(
             line_numbers_right_format,
             line_numbers_right_style,
             line_numbers_zero_style,
-            pager,
-            paging_mode,
             // Hack: plus-style must come before plus-*emph-style because the latter default
             // dynamically to the value of the former.
             plus_style,
@@ -209,8 +210,6 @@ pub fn set_options(
             plus_non_emph_style,
             raw,
             relative_paths,
-            show_colors,
-            show_themes,
             side_by_side,
             wrap_max_lines,
             wrap_right_prefix_symbol,
@@ -238,7 +237,6 @@ pub fn set_options(
     theme::set__color_mode__syntax_theme__syntax_set(opt, assets);
     opt.computed.inspect_raw_lines =
         cli::InspectRawLines::from_str(&opt.inspect_raw_lines).unwrap();
-    opt.computed.paging_mode = parse_paging_mode(&opt.paging_mode);
 
     // --color-only is used for interactive.diffFilter (git add -p). side-by-side, and
     // **-decoration-style cannot be used there (does not emit lines in 1-1 correspondence with raw git output).
@@ -531,19 +529,6 @@ impl FromStr for cli::InspectRawLines {
     }
 }
 
-fn parse_paging_mode(paging_mode_string: &str) -> PagingMode {
-    match paging_mode_string.to_lowercase().as_str() {
-        "always" => PagingMode::Always,
-        "never" => PagingMode::Never,
-        "auto" => PagingMode::QuitIfOneScreen,
-        _ => {
-            fatal(format!(
-                "Invalid value for --paging option: {paging_mode_string} (valid values are \"always\", \"never\", and \"auto\")",
-            ));
-        }
-    }
-}
-
 fn parse_width_specifier(width_arg: &str, terminal_width: usize) -> Result<usize, String> {
     let width_arg = width_arg.trim();
 
@@ -660,7 +645,6 @@ pub mod tests {
 
     use crate::cli;
     use crate::tests::integration_test_utils;
-    use crate::utils::bat::output::PagingMode;
 
     pub const TERMINAL_WIDTH_IN_TESTS: usize = 43;
 
@@ -772,8 +756,6 @@ pub mod tests {
         assert_eq!(opt.minus_non_emph_style, "black black");
         assert_eq!(opt.minus_style, "black black");
         assert!(opt.navigate);
-        assert_eq!(opt.navigate_regex, Some("xxxyyyzzz".to_string()));
-        assert_eq!(opt.paging_mode, "never");
         assert_eq!(opt.plus_emph_style, "black black");
         assert_eq!(opt.plus_empty_line_marker_style, "black black");
         assert_eq!(opt.plus_non_emph_style, "black black");
@@ -787,8 +769,6 @@ pub mod tests {
         assert_eq!(opt.width, Some("77".to_string()));
         assert_eq!(opt.tokenization_regex, "xxxyyyzzz");
         assert_eq!(opt.zero_style, "black black");
-
-        assert_eq!(opt.computed.paging_mode, PagingMode::Never);
 
         remove_file(git_config_path).unwrap();
     }
