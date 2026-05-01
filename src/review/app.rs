@@ -464,24 +464,11 @@ impl App {
             return false;
         }
 
-        let comments_path = std::path::PathBuf::from("COMMENTS.md");
-        let file_existed = comments_path.exists();
+        let comment_id = next_comment_id();
+        let comment_filename = format!("COMMENT-{}.md", comment_id);
+        let comment_path = std::path::PathBuf::from(&comment_filename);
 
         let mut entry = String::new();
-        if !file_existed {
-            entry.push_str(
-                "<!--\n\
-                 This file accumulates diff hunks from a PR review along with a question\n\
-                 or request about each hunk for Claude to address. Each entry below has:\n\
-                   * a heading with the file path and starting line\n\
-                   * a fenced ```diff block containing the hunk\n\
-                   * a `### Request` section with the user's instruction\n\
-                 Entries are separated by a `---` horizontal rule.\n\
-                 -->\n\n",
-            );
-        } else {
-            entry.push_str("\n---\n\n");
-        }
         entry.push_str(&format!("## `{}:{}`\n\n", file_path, target_line));
         entry.push_str("```diff\n");
         entry.push_str(kept_diff.trim_end_matches('\n'));
@@ -490,24 +477,32 @@ impl App {
         entry.push_str(&instruction);
         entry.push('\n');
 
-        use std::io::Write;
-        let write_result = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&comments_path)
-            .and_then(|mut f| f.write_all(entry.as_bytes()));
-
-        if write_result.is_err() {
-            self.status_message =
-                Some("ask claude: failed to write COMMENTS.md".to_string());
+        if std::fs::write(&comment_path, &entry).is_err() {
+            self.status_message = Some(format!("ask claude: failed to write {}", comment_filename));
             return false;
         }
 
-        let claude_prompt = "Read COMMENTS.md in this directory. Each entry contains a \
-                             diff hunk followed by a `### Request` section. Work through \
-                             every entry in order, addressing the request — make the code \
-                             changes (or answer the question) and remove the entry from \
-                             COMMENTS.md once handled.";
+        let claude_prompt = "/loop Process COMMENT-<id>.md files in this directory \
+                             (e.g. COMMENT-1.md, COMMENT-2.md). Each file contains a diff \
+                             hunk and a `### Request` section. Pace the loop via `entr` \
+                             (installed) so iterations fire on filesystem change rather \
+                             than a fixed interval — `echo . | entr -nzd <cmd>` exits as \
+                             soon as a new file appears in the cwd, which is the trigger \
+                             you want. In each iteration: list COMMENT-*.md and dispatch \
+                             any unhandled files to subagents (Agent tool) in parallel, \
+                             then block on entr for the next change before ending the \
+                             iteration. Process any pre-existing files on the very first \
+                             iteration before the first entr block. Each comment is \
+                             self-contained, so subagents can run concurrently; launch \
+                             them in a single message when multiple files are present. \
+                             Subagent rules: give the subagent the file path and tell it \
+                             to read the file, address the request, and follow these \
+                             rules — if the request was answerable purely with code \
+                             changes, delete the file when done; if the request was a \
+                             question (or producing an answer is part of handling it), \
+                             append a `### Response` section with the answer to \
+                             COMMENT-<id>.md and leave the file in place, and return the \
+                             answer so you can surface it in your terminal output.";
         let cwd = std::env::current_dir().ok();
         let command = match cwd.as_ref().and_then(|p| p.to_str()) {
             Some(dir) => format!(
@@ -520,13 +515,13 @@ impl App {
 
         if copy_to_clipboard(&command) {
             self.status_message = Some(format!(
-                "appended {} to COMMENTS.md; claude command copied — paste in a new terminal",
-                file_path
+                "wrote {} ({}); claude command copied — paste in a new terminal if not already running",
+                comment_filename, file_path
             ));
         } else {
             self.status_message = Some(format!(
-                "appended {} to COMMENTS.md (clipboard copy failed)",
-                file_path
+                "wrote {} ({}) (clipboard copy failed)",
+                comment_filename, file_path
             ));
         }
         true
@@ -571,6 +566,29 @@ fn strip_quote_prefix(line: &str) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// Pick the next unused id for a `COMMENT-<id>.md` file in the cwd.
+fn next_comment_id() -> u32 {
+    let mut max_id = 0u32;
+    if let Ok(entries) = std::fs::read_dir(".") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(rest) = name.strip_prefix("COMMENT-") else {
+                continue;
+            };
+            let Some(num_str) = rest.strip_suffix(".md") else {
+                continue;
+            };
+            if let Ok(n) = num_str.parse::<u32>() {
+                if n > max_id {
+                    max_id = n;
+                }
+            }
+        }
+    }
+    max_id + 1
 }
 
 /// POSIX single-quote a string: wrap in `'…'`, escaping any `'` as `'\''`.
