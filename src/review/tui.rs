@@ -283,7 +283,7 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("e            Open in $EDITOR"),
         Line::from("c            Comment on hunk (PR only)"),
         Line::from("S            Submit review (PR only)"),
-        Line::from("a            Copy claude command (pbcopy)"),
+        Line::from("a            Append to COMMENTS.md + copy claude cmd"),
         Line::from("g            Open in GitHub"),
         Line::from("q / Esc      Quit"),
     ];

@@ -176,13 +176,88 @@ impl App {
             } else {
                 hunk.file_path.clone()
             };
-            let line = first_modified_line(hunk);
+            let line = self
+                .topmost_visible_line()
+                .unwrap_or_else(|| first_modified_line(hunk));
 
             let _ = std::process::Command::new(&editor)
                 .arg(format!("+{}", line))
                 .arg(file)
                 .status();
         }
+    }
+
+    /// Rendered row index within the current hunk that corresponds to the
+    /// topmost visible line. Returns `None` if there is no current hunk.
+    fn row_in_current_hunk(&self) -> Option<usize> {
+        self.current_hunk()?;
+        let hunk_start = self
+            .hunk_line_offsets
+            .get(self.current_hunk)
+            .copied()
+            .unwrap_or(0);
+        Some(self.scroll_offset.saturating_sub(hunk_start) as usize)
+    }
+
+    /// Map the current scroll position to a new-file line number within the
+    /// current hunk. Walks `raw_segment` in lock-step with rendered rows under
+    /// the assumption that delta produces ~one rendered row per raw line.
+    /// Returns `None` if there is no current hunk.
+    pub fn topmost_visible_line(&self) -> Option<usize> {
+        let hunk = self.current_hunk()?;
+        let plus_start = hunk.plus_start;
+        let row_in_hunk = self.row_in_current_hunk()?;
+
+        let mut line_num = plus_start;
+        let mut past_at_at = false;
+        for (idx, l) in hunk.raw_segment.lines().enumerate() {
+            if idx >= row_in_hunk {
+                return Some(line_num);
+            }
+            if !past_at_at {
+                if l.starts_with("@@") {
+                    past_at_at = true;
+                }
+                continue;
+            }
+            if l.starts_with('+') || l.starts_with(' ') {
+                line_num += 1;
+            }
+            // '-' lines don't advance the new-file line counter.
+        }
+        Some(line_num.saturating_sub(1).max(plus_start))
+    }
+
+    /// Slice of `raw_segment` starting at the scrolled-to row. Pre-`@@` file
+    /// headers are dropped, but the `@@` line itself is retained at the top so
+    /// the result is still a recognizable diff fragment. If the user hasn't
+    /// scrolled past the `@@` line, returns the full hunk.
+    fn visible_raw_segment(&self) -> Option<String> {
+        let hunk = self.current_hunk()?;
+        let row_in_hunk = self.row_in_current_hunk()?;
+        let lines: Vec<&str> = hunk.raw_segment.lines().collect();
+        let at_at_idx = lines.iter().position(|l| l.starts_with("@@"));
+
+        let first_content_idx = match at_at_idx {
+            Some(i) => i + 1,
+            None => 0,
+        };
+
+        if row_in_hunk <= first_content_idx {
+            return Some(hunk.raw_segment.clone());
+        }
+
+        let content_start = row_in_hunk.min(lines.len());
+        let mut out = String::new();
+        if let Some(i) = at_at_idx {
+            out.push_str(lines[i]);
+            out.push('\n');
+        }
+        for l in &lines[content_start..] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        Some(out.trim_end_matches('\n').to_string())
     }
 
     pub fn open_in_github(&self) {
@@ -316,28 +391,39 @@ impl App {
         true
     }
 
-    /// Open $EDITOR for the user to type an instruction, then copy a
-    /// `cd <repo> && claude '<prompt>'` command to the clipboard so the user
-    /// can paste it into a new terminal window. Non-blocking: drev stays open.
+    /// Open $EDITOR for the user to type an instruction, then append the hunk's
+    /// diff and the instruction to `COMMENTS.md` in the current directory so a
+    /// separate Claude invocation can read and act on them. Non-blocking: drev
+    /// stays open.
     pub fn ask_claude(&mut self) -> bool {
         let hunk = match self.current_hunk() {
             Some(h) => h,
             None => return false,
         };
-        let raw_segment = hunk.raw_segment.clone();
+        let raw_segment = self
+            .visible_raw_segment()
+            .unwrap_or_else(|| hunk.raw_segment.clone());
         let file_path = hunk.file_path.clone();
-        let plus_start = hunk.plus_start;
+        let target_line = self.topmost_visible_line().unwrap_or(hunk.plus_start);
 
-        // Template: hunk shown as comments for reference; user writes below.
+        // Template: each diff line is prefixed with `> ` so the user can delete
+        // any lines they don't want saved to COMMENTS.md (target a subset).
+        // Helper text uses `#` and is stripped from both the diff and the
+        // instruction.
         let mut template = String::new();
-        template.push_str(&format!("# Hunk from {}:{}\n", file_path, plus_start));
+        template.push_str(&format!("# Hunk from {}:{}\n", file_path, target_line));
+        template.push_str(
+            "# Lines starting with `> ` below are the diff. Delete any you\n\
+             # don't want saved; keep what you want Claude to focus on.\n",
+        );
         for line in raw_segment.lines() {
-            template.push_str("# ");
+            template.push_str("> ");
             template.push_str(line);
             template.push('\n');
         }
         template.push_str(
-            "#\n# Write your instruction for Claude below. Lines starting with # are ignored.\n\n",
+            "#\n# Write your instruction for Claude below. Lines starting with `#`\n\
+             # or `> ` are ignored from the instruction.\n\n",
         );
 
         let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
@@ -359,9 +445,15 @@ impl App {
         };
         let _ = std::fs::remove_file(&tmp_path);
 
+        let kept_diff: String = contents
+            .lines()
+            .filter_map(strip_quote_prefix)
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let instruction: String = contents
             .lines()
-            .filter(|l| !l.trim_start().starts_with('#'))
+            .filter(|l| !l.trim_start().starts_with('#') && strip_quote_prefix(l).is_none())
             .collect::<Vec<_>>()
             .join("\n")
             .trim()
@@ -372,33 +464,72 @@ impl App {
             return false;
         }
 
-        let prompt = format!(
-            "I'm reviewing a pull request. Here's a hunk from `{}`:\n\n```diff\n{}\n```\n\n{}",
-            file_path,
-            raw_segment.trim_end(),
-            instruction,
-        );
+        let comments_path = std::path::PathBuf::from("COMMENTS.md");
+        let file_existed = comments_path.exists();
 
-        let command = match super::github::repo_root() {
-            Some(root) => format!(
+        let mut entry = String::new();
+        if !file_existed {
+            entry.push_str(
+                "<!--\n\
+                 This file accumulates diff hunks from a PR review along with a question\n\
+                 or request about each hunk for Claude to address. Each entry below has:\n\
+                   * a heading with the file path and starting line\n\
+                   * a fenced ```diff block containing the hunk\n\
+                   * a `### Request` section with the user's instruction\n\
+                 Entries are separated by a `---` horizontal rule.\n\
+                 -->\n\n",
+            );
+        } else {
+            entry.push_str("\n---\n\n");
+        }
+        entry.push_str(&format!("## `{}:{}`\n\n", file_path, target_line));
+        entry.push_str("```diff\n");
+        entry.push_str(kept_diff.trim_end_matches('\n'));
+        entry.push_str("\n```\n\n");
+        entry.push_str("### Request\n\n");
+        entry.push_str(&instruction);
+        entry.push('\n');
+
+        use std::io::Write;
+        let write_result = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&comments_path)
+            .and_then(|mut f| f.write_all(entry.as_bytes()));
+
+        if write_result.is_err() {
+            self.status_message =
+                Some("ask claude: failed to write COMMENTS.md".to_string());
+            return false;
+        }
+
+        let claude_prompt = "Read COMMENTS.md in this directory. Each entry contains a \
+                             diff hunk followed by a `### Request` section. Work through \
+                             every entry in order, addressing the request — make the code \
+                             changes (or answer the question) and remove the entry from \
+                             COMMENTS.md once handled.";
+        let cwd = std::env::current_dir().ok();
+        let command = match cwd.as_ref().and_then(|p| p.to_str()) {
+            Some(dir) => format!(
                 "cd {} && claude {}\n",
-                shell_single_quote(&root),
-                shell_single_quote(&prompt),
+                shell_single_quote(dir),
+                shell_single_quote(claude_prompt),
             ),
-            None => format!("claude {}\n", shell_single_quote(&prompt)),
+            None => format!("claude {}\n", shell_single_quote(claude_prompt)),
         };
 
         if copy_to_clipboard(&command) {
             self.status_message = Some(format!(
-                "copied claude command for {} — paste into a new terminal",
+                "appended {} to COMMENTS.md; claude command copied — paste in a new terminal",
                 file_path
             ));
-            true
         } else {
-            self.status_message =
-                Some("ask claude: failed to copy to clipboard (pbcopy not available?)".to_string());
-            false
+            self.status_message = Some(format!(
+                "appended {} to COMMENTS.md (clipboard copy failed)",
+                file_path
+            ));
         }
+        true
     }
 
     /// Submit all pending comments as a single GitHub review.
@@ -426,6 +557,19 @@ impl App {
             .iter()
             .filter(|h| self.viewed.contains(&h.content_hash))
             .count()
+    }
+}
+
+/// Strip the editor-template `> ` prefix used to mark diff lines. Returns the
+/// remaining content if the line is a diff line (`> ...` or a bare `>`), or
+/// `None` for any other line (helper text or instruction).
+fn strip_quote_prefix(line: &str) -> Option<&str> {
+    if let Some(rest) = line.strip_prefix("> ") {
+        Some(rest)
+    } else if line == ">" {
+        Some("")
+    } else {
+        None
     }
 }
 
