@@ -485,35 +485,15 @@ impl App {
             return false;
         }
 
-        let claude_prompt = "/loop Process COMMENT-<id>.md files in this directory \
-                             (e.g. COMMENT-1.md, COMMENT-2.md). Each file contains a diff \
-                             hunk and a `### Request` section. Pace the loop via `entr` \
-                             (installed) so iterations fire on filesystem change rather \
-                             than a fixed interval — `echo . | entr -nzd <cmd>` exits as \
-                             soon as a new file appears in the cwd, which is the trigger \
-                             you want. In each iteration: list COMMENT-*.md and dispatch \
-                             any unhandled files to subagents (Agent tool) in parallel, \
-                             then block on entr for the next change before ending the \
-                             iteration. Process any pre-existing files on the very first \
-                             iteration before the first entr block. Each comment is \
-                             self-contained, so subagents can run concurrently; launch \
-                             them in a single message when multiple files are present. \
-                             Subagent rules: give the subagent the file path and tell it \
-                             to read the file, address the request, and follow these \
-                             rules — if the request was answerable purely with code \
-                             changes, delete the file when done; if the request was a \
-                             question (or producing an answer is part of handling it), \
-                             append a `### Response` section with the answer to \
-                             COMMENT-<id>.md and leave the file in place, and return the \
-                             answer so you can surface it in your terminal output.";
+        let claude_prompt = claude_watch_prompt();
         let cwd = std::env::current_dir().ok();
         let command = match cwd.as_ref().and_then(|p| p.to_str()) {
             Some(dir) => format!(
-                "cd {} && claude {}\n",
+                "cd {} && claude --effort high {}\n",
                 shell_single_quote(dir),
-                shell_single_quote(claude_prompt),
+                shell_single_quote(&claude_prompt),
             ),
-            None => format!("claude {}\n", shell_single_quote(claude_prompt)),
+            None => format!("claude --effort high {}\n", shell_single_quote(&claude_prompt)),
         };
 
         if copy_to_clipboard(&command) {
@@ -643,6 +623,80 @@ fn strip_quote_prefix(line: &str) -> Option<&str> {
     }
 }
 
+/// Shell command (POSIX `sh`) that watches the cwd for `COMMENT-*.md` files and
+/// prints one line per file as it appears, re-printing a name if the file is
+/// deleted and recreated. It is meant to run under Claude's Monitor tool so each
+/// printed line becomes an event that wakes the agent.
+///
+/// It polls (1s) rather than using a native filesystem-event watcher
+/// (watchexec/fswatch/inotifywait). Under macOS Seatbelt — which sandboxes
+/// Claude Code's Bash tool — the FSEvents/kqueue APIs those tools rely on are
+/// starved: they register no watches and emit nothing, failing *silently*. That
+/// silent failure is what defeated the earlier watchexec-based prompts. `stat()`
+/// polling is unaffected by the sandbox, so it works where the feature runs.
+///
+/// Kept in sync with the prompt via [`claude_watch_prompt`]; exercised by the
+/// `comment_watch_command_emits_on_landing` test.
+const COMMENT_WATCH_COMMAND: &str = r#"last=""
+while true; do
+  cur=""
+  for f in COMMENT-*.md; do
+    [ -e "$f" ] || continue
+    cur="$cur $f"
+  done
+  for f in $cur; do
+    case " $last " in
+      *" $f "*) ;;
+      *) echo "$f" ;;
+    esac
+  done
+  last="$cur"
+  sleep 1
+done"#;
+
+/// Build the prompt drev hands to a separate `claude` invocation so it watches
+/// for and processes `COMMENT-*.md` files as the user drops them. Embeds
+/// [`COMMENT_WATCH_COMMAND`] verbatim so the prompt and the tested command never
+/// drift apart.
+fn claude_watch_prompt() -> String {
+    format!(
+        r#"Process COMMENT-<id>.md files in this directory (e.g. COMMENT-1.md, COMMENT-2.md). Each file contains a diff hunk and a `### Request` section.
+
+A separate program writes these files as the user reviews code, so they appear over time and you must react to each as it lands. Do NOT use a native filesystem-event watcher (watchexec, fswatch, inotifywait): the Bash sandbox starves the FSEvents/kqueue APIs they rely on, so they register nothing and emit nothing — they fail silently. Use the polling watcher below.
+
+Each COMMENT is one of two kinds; read its `### Request` to classify it:
+  - QUESTION — it only asks for information or an explanation; answering it does not modify any file in the repo.
+  - EDIT — fulfilling it requires changing code or other repo files.
+
+Dispatch policy:
+  - QUESTIONs run immediately and in parallel. Dispatch a subagent the moment one lands; there is no limit on how many questions run at once, and they may run alongside an edit.
+  - EDITs run strictly one at a time. Keep a FIFO queue of pending edits and hold the invariant that AT MOST ONE edit subagent is ever in flight — two agents editing concurrently can clobber each other's changes. When an edit subagent finishes, start the next queued edit. (Questions don't touch repo files, so they never count against this limit.)
+
+Order matters — start the watcher BEFORE the initial scan so files that land during startup aren't lost in a race.
+
+Step 1: start the watcher with the Monitor tool (persistent: true). Run exactly this command:
+{COMMENT_WATCH_COMMAND}
+It polls the cwd once a second and prints one line per COMMENT-*.md filename as it appears (re-printing a name if the file is deleted and recreated). Each printed line is a Monitor event that wakes you; it stays quiet when nothing changes.
+
+Step 2: list the COMMENT-*.md already present, read and classify each, and route it per the dispatch policy (fire questions now; append edits to the queue and start the first one). Track handled paths in a set — call it `dispatched`.
+
+Step 3: handle Monitor events. Each event is a single line naming a COMMENT-*.md file. For each line:
+  - if the path is already in `dispatched`, skip it (already handled or in flight);
+  - otherwise add it to `dispatched`, read and classify it, route it per the dispatch policy, and remove it from `dispatched` once its subagent finishes.
+  This prevents the double-dispatch at startup — the initial scan and the watcher's first poll both surface pre-existing files — while still letting a recycled filename (deleted then recreated) be picked up.
+
+Keep handling events indefinitely; do not poll or re-glob the directory yourself between events — the watcher is authoritative.
+
+If the watcher stops (its Monitor task exits or is reported stopped), restart it once with the same command and resume; if it stops again in quick succession, stop and report.
+
+Subagent rules: give the subagent the file path and tell it to read the file and address the request:
+  - EDIT subagents: make the changes, then delete the COMMENT file when done. Report what you changed.
+  - QUESTION subagents: append a `### Response` section with the answer to the file, leave the file in place, and return the answer.
+
+After a QUESTION subagent finishes, print the question (the text of its `### Request`) and the answer here in this session, so the user sees the Q&A in the terminal as well as in the file."#
+    )
+}
+
 /// Pick the next unused id for a `COMMENT-<id>.md` file in the cwd.
 fn next_comment_id() -> u32 {
     let mut max_id = 0u32;
@@ -724,6 +778,7 @@ fn first_modified_line(hunk: &ReviewHunk) -> usize {
 mod tests {
     use super::*;
     use ratatui::text::{Line, Text};
+    use std::time::{Duration, Instant};
 
     fn make_hunk(path: &str, hash: &str, num_lines: usize) -> ReviewHunk {
         let lines: Vec<Line<'static>> = (0..num_lines)
@@ -941,5 +996,197 @@ mod tests {
         let mut app = App::new(Vec::new(), HashSet::new(), make_local_metadata());
         app.request_revert();
         assert!(!app.awaiting_revert_confirm);
+    }
+
+    /// Create a unique, empty temp directory (no `tempfile` dev-dep in this crate).
+    fn unique_temp_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut p = std::env::temp_dir();
+        p.push(format!("drev-test-{tag}-{}-{}", std::process::id(), nanos));
+        std::fs::create_dir_all(&p).expect("create temp dir");
+        p
+    }
+
+    /// Block until a line equal to `want` arrives, or `timeout` elapses.
+    fn wait_for_line(
+        rx: &std::sync::mpsc::Receiver<String>,
+        want: &str,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(remaining) {
+                Ok(line) if line.trim() == want => return true,
+                Ok(_) => continue,
+                Err(_) => return false, // timeout or sender hung up
+            }
+        }
+        false
+    }
+
+    /// The core contract: the watcher command drev ships must emit a line naming
+    /// a `COMMENT-*.md` file both when one already exists at startup and — the
+    /// part every native-FS-event iteration silently failed — when one lands
+    /// *after* the watcher is running. Deterministic and fast; runs in `cargo test`.
+    #[cfg(unix)]
+    #[test]
+    fn comment_watch_command_emits_on_landing() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+
+        let dir = unique_temp_dir("watch");
+
+        // Pre-existing file: the watcher is started before drev's own initial
+        // scan, so its first poll must surface files already on disk.
+        std::fs::write(dir.join("COMMENT-1.md"), "## pre\n### Request\nq\n").unwrap();
+
+        let mut child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(COMMENT_WATCH_COMMAND)
+            .current_dir(&dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn watcher");
+
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let emitted_preexisting = wait_for_line(&rx, "COMMENT-1.md", Duration::from_secs(5));
+
+        // The behavior the whole feature hangs on: a file that lands while the
+        // watcher is already running must produce an event.
+        std::fs::write(dir.join("COMMENT-2.md"), "## new\n### Request\nq\n").unwrap();
+        let emitted_landed = wait_for_line(&rx, "COMMENT-2.md", Duration::from_secs(5));
+
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            emitted_preexisting,
+            "watcher did not emit a pre-existing COMMENT-*.md within 5s"
+        );
+        assert!(
+            emitted_landed,
+            "watcher did not emit a COMMENT-*.md that landed after startup within 5s"
+        );
+    }
+
+    /// End-to-end: launch a real headless `claude` with the actual shipped
+    /// prompt, drop a question-COMMENT after it starts, and assert the agent
+    /// picks it up and appends a `### Response`. Ignored by default — it needs a
+    /// `claude` binary (with the Monitor and Agent tools), network, and costs
+    /// tokens. Run with:
+    ///   cargo test -p git-delta claude_processes_landed_comment_end_to_end \
+    ///     -- --ignored --nocapture
+    /// Override the binary with CLAUDE_BIN=/path/to/claude.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "spawns a real claude process; run manually with --ignored"]
+    fn claude_processes_landed_comment_end_to_end() {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let claude = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
+        let available = Command::new(&claude)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !available {
+            eprintln!("skipping: `{claude}` not runnable (set CLAUDE_BIN to override)");
+            return;
+        }
+
+        let dir = unique_temp_dir("e2e");
+        let log_path = dir.join("claude.log");
+        let log = std::fs::File::create(&log_path).unwrap();
+
+        // The exact prompt drev hands out.
+        let prompt = claude_watch_prompt();
+
+        let mut child = Command::new(&claude)
+            .args(["--print", "--effort", "high", "--dangerously-skip-permissions"])
+            .arg(&prompt)
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            // Fall back to the persisted interactive login; an invalid
+            // ANTHROPIC_API_KEY in the env (e.g. one injected by an outer Claude
+            // session) otherwise makes `claude` exit immediately with
+            // "Invalid API key".
+            .env_remove("ANTHROPIC_API_KEY")
+            .process_group(0) // own group so we can tear down the whole tree
+            .spawn()
+            .expect("spawn claude");
+        let pgid = child.id() as i32;
+
+        // Let the watcher come up before dropping a file.
+        std::thread::sleep(Duration::from_secs(5));
+
+        // A question request. The signal that the file was genuinely dispatched
+        // is the *answer* (7 × 8 = 56) appearing — a token absent from both the
+        // request text and the diff, so it can only get there if the agent ran.
+        // (Checking for the literal "### Response" marker would false-positive,
+        // since the agent is instructed to write that heading and we'd have to
+        // mention it in the request.)
+        const ANSWER: &str = "56";
+        let comment = "## `demo.txt:1`\n\n```diff\n@@ -1 +1 @@\n-foo\n+bar\n```\n\n### Request\n\nConnectivity test — do not edit any file except this one. Append the numeric answer to: what is 7 times 8?\n";
+        assert!(
+            !comment.contains(ANSWER),
+            "request text must not contain the answer token, or detection is meaningless"
+        );
+        std::fs::write(dir.join("COMMENT-1.md"), comment).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(240);
+        let mut got_response = false;
+        while Instant::now() < deadline {
+            if let Ok(s) = std::fs::read_to_string(dir.join("COMMENT-1.md"))
+                && s != comment
+                && s.contains(ANSWER)
+            {
+                got_response = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+
+        // Best-effort teardown of the whole process group (silence the expected
+        // "No such process" once claude has already exited).
+        let kill = |sig: &str| {
+            let _ = Command::new("kill")
+                .arg(sig)
+                .arg(format!("-{pgid}"))
+                .stderr(Stdio::null())
+                .status();
+        };
+        kill("-TERM");
+        let _ = child.kill();
+        let _ = child.wait();
+        kill("-KILL");
+
+        if !got_response {
+            let tail = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::remove_dir_all(&dir);
+            panic!(
+                "claude did not append the answer ({ANSWER}) within 240s.\n--- claude.log ---\n{tail}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
