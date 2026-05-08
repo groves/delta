@@ -88,6 +88,15 @@ fn handle_key(key: KeyEvent, app: &mut App) {
 
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
+        return;
+    }
+
+    if app.awaiting_revert_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_revert(),
+            _ => app.cancel_revert(),
+        }
+        return;
     }
 
     match key.code {
@@ -119,6 +128,7 @@ fn handle_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('p') | KeyCode::Char('[') => app.prev_hunk(),
         KeyCode::Char(' ') => app.toggle_viewed(),
         KeyCode::Char('g') => app.open_in_github(),
+        KeyCode::Char('r') => app.request_revert(),
         _ => {}
     }
 }
@@ -140,7 +150,7 @@ fn draw(frame: &mut Frame, app: &App) {
     draw_status_bar(frame, app, chunks[2]);
 
     if app.show_help {
-        draw_help_overlay(frame, area);
+        draw_help_overlay(frame, area, app);
     }
 }
 
@@ -225,7 +235,15 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
-    let primary_text = if let Some(msg) = &app.status_message {
+    let primary_text = if app.awaiting_revert_confirm {
+        match app.current_hunk() {
+            Some(hunk) => format!(
+                " Revert hunk in {}:{}? [y/N]",
+                hunk.file_path, hunk.plus_start
+            ),
+            None => " Revert hunk? [y/N]".to_string(),
+        }
+    } else if let Some(msg) = &app.status_message {
         format!(" {}", msg)
     } else if let Some(hunk) = app.current_hunk() {
         let viewed_marker = if app.is_current_viewed() {
@@ -243,7 +261,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(status, status_chunks[0]);
 
     let hints_text = if app.pr_metadata.repo.is_empty() {
-        " n/p:hunk  j/k:scroll  space:viewed  e:editor  a:claude  ?:help  q:quit".to_string()
+        " n/p:hunk  j/k:scroll  space:viewed  e:editor  a:claude  r:revert  ?:help  q:quit"
+            .to_string()
     } else if app.pending_comments.is_empty() {
         " n/p:hunk  j/k:scroll  space:viewed  e:editor  c:comment  a:claude  g:github  ?:help  q:quit"
             .to_string()
@@ -257,20 +276,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(hints, status_chunks[1]);
 }
 
-fn draw_help_overlay(frame: &mut Frame, area: Rect) {
-    let help_width = 50.min(area.width.saturating_sub(4));
-    let help_height = 17.min(area.height.saturating_sub(4));
-
-    let help_area = Rect {
-        x: (area.width - help_width) / 2,
-        y: (area.height - help_height) / 2,
-        width: help_width,
-        height: help_height,
-    };
-
-    frame.render_widget(Clear, help_area);
-
-    let help_text = vec![
+fn draw_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let mut help_text = vec![
         Line::from("Keybindings").style(Style::default().add_modifier(Modifier::BOLD)),
         Line::from(""),
         Line::from("j / Down     Scroll down"),
@@ -285,8 +292,23 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("S            Submit review (PR only)"),
         Line::from("a            Append to COMMENTS.md + copy claude cmd"),
         Line::from("g            Open in GitHub"),
-        Line::from("q / Esc      Quit"),
     ];
+    if !app.is_pr_mode() {
+        help_text.push(Line::from("r            Revert hunk (git apply -R)"));
+    }
+    help_text.push(Line::from("q / Esc      Quit"));
+
+    let help_width = 50.min(area.width.saturating_sub(4));
+    let help_height = (help_text.len() as u16 + 2).min(area.height.saturating_sub(4));
+
+    let help_area = Rect {
+        x: (area.width - help_width) / 2,
+        y: (area.height - help_height) / 2,
+        width: help_width,
+        height: help_height,
+    };
+
+    frame.render_widget(Clear, help_area);
 
     let help = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title(" Help "))

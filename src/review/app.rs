@@ -33,6 +33,8 @@ pub struct App {
     pub pending_comments: Vec<PendingComment>,
     /// Transient status message shown in the status bar; cleared on next key input.
     pub status_message: Option<String>,
+    /// True after `r` is pressed; the next key either confirms (y/Y) or cancels.
+    pub awaiting_revert_confirm: bool,
 }
 
 impl App {
@@ -48,6 +50,7 @@ impl App {
             hunk_line_offsets: Vec::new(),
             pending_comments: Vec::new(),
             status_message: None,
+            awaiting_revert_confirm: false,
         };
         // Auto-mark lock files as viewed.
         for hunk in &app.hunks {
@@ -547,6 +550,78 @@ impl App {
         Some(url)
     }
 
+    /// Whether the diff being reviewed comes from a remote PR (vs the local working copy).
+    pub fn is_pr_mode(&self) -> bool {
+        !self.pr_metadata.repo.is_empty()
+    }
+
+    /// Begin the revert-hunk flow. The status bar will show a y/N prompt; the
+    /// next key press either calls `confirm_revert` or `cancel_revert`. No-op
+    /// in PR mode.
+    pub fn request_revert(&mut self) {
+        if self.is_pr_mode() || self.current_hunk().is_none() {
+            return;
+        }
+        self.awaiting_revert_confirm = true;
+    }
+
+    pub fn cancel_revert(&mut self) {
+        self.awaiting_revert_confirm = false;
+    }
+
+    /// Apply the current hunk's diff in reverse against the working copy via
+    /// `git apply -R`. On success, drops the hunk from the in-memory list.
+    pub fn confirm_revert(&mut self) {
+        self.awaiting_revert_confirm = false;
+        let Some(hunk) = self.current_hunk() else {
+            return;
+        };
+        let patch = hunk.raw_segment.clone();
+        let path_display = hunk.file_path.clone();
+
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let tmp_path = format!("{}/drev-revert-{}.patch", tmp_dir, std::process::id());
+        if let Err(e) = std::fs::write(&tmp_path, &patch) {
+            self.status_message = Some(format!("revert: failed to write patch: {}", e));
+            return;
+        }
+
+        let cwd = super::github::repo_root().unwrap_or_else(|| ".".to_string());
+        let output = std::process::Command::new("git")
+            .args(["apply", "-R", "--recount"])
+            .arg(&tmp_path)
+            .current_dir(&cwd)
+            .output();
+        let _ = std::fs::remove_file(&tmp_path);
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let idx = self.current_hunk;
+                self.hunks.remove(idx);
+                self.recompute_offsets();
+                if self.hunks.is_empty() {
+                    self.current_hunk = 0;
+                } else if self.current_hunk >= self.hunks.len() {
+                    self.current_hunk = self.hunks.len() - 1;
+                }
+                self.scroll_to_current_hunk();
+                self.status_message = Some(format!("reverted hunk in {}", path_display));
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let msg = if stderr.is_empty() {
+                    "revert: git apply -R failed".to_string()
+                } else {
+                    format!("revert failed: {}", stderr)
+                };
+                self.status_message = Some(msg);
+            }
+            Err(e) => {
+                self.status_message = Some(format!("revert: failed to run git apply: {}", e));
+            }
+        }
+    }
+
     pub fn viewed_count(&self) -> usize {
         self.hunks
             .iter()
@@ -668,6 +743,15 @@ mod tests {
             number: 1,
             title: "test".to_string(),
             repo: "test/repo".to_string(),
+            head_sha: String::new(),
+        }
+    }
+
+    fn make_local_metadata() -> PrMetadata {
+        PrMetadata {
+            number: 0,
+            title: "local".to_string(),
+            repo: String::new(),
             head_sha: String::new(),
         }
     }
@@ -820,5 +904,42 @@ mod tests {
             "first line should be collapsed summary"
         );
         assert_eq!(lines[1], "separator");
+    }
+
+    #[test]
+    fn request_revert_is_noop_in_pr_mode() {
+        let hunks = vec![make_hunk("a.rs", "h1", 3)];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+        app.request_revert();
+        assert!(
+            !app.awaiting_revert_confirm,
+            "PR mode should not arm the revert prompt"
+        );
+    }
+
+    #[test]
+    fn request_revert_arms_prompt_in_local_mode() {
+        let hunks = vec![make_hunk("a.rs", "h1", 3)];
+        let mut app = App::new(hunks, HashSet::new(), make_local_metadata());
+        app.request_revert();
+        assert!(app.awaiting_revert_confirm);
+    }
+
+    #[test]
+    fn cancel_revert_clears_prompt() {
+        let hunks = vec![make_hunk("a.rs", "h1", 3)];
+        let mut app = App::new(hunks, HashSet::new(), make_local_metadata());
+        app.request_revert();
+        app.cancel_revert();
+        assert!(!app.awaiting_revert_confirm);
+        // Hunk should still be present.
+        assert_eq!(app.hunks.len(), 1);
+    }
+
+    #[test]
+    fn request_revert_with_no_hunks_is_noop() {
+        let mut app = App::new(Vec::new(), HashSet::new(), make_local_metadata());
+        app.request_revert();
+        assert!(!app.awaiting_revert_confirm);
     }
 }
