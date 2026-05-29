@@ -116,14 +116,15 @@ fn handle_key(key: KeyEvent, app: &mut App) {
             app.scroll_up(1);
             app.update_current_hunk_from_scroll();
         }
-        KeyCode::Char('d') => {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.scroll_down(20);
             app.update_current_hunk_from_scroll();
         }
-        KeyCode::Char('u') => {
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.scroll_up(20);
             app.update_current_hunk_from_scroll();
         }
+        KeyCode::Char('u') => app.undo_viewed(),
         KeyCode::Char('n') | KeyCode::Char(']') => app.next_hunk(),
         KeyCode::Char('p') | KeyCode::Char('[') => app.prev_hunk(),
         KeyCode::Char(' ') => app.toggle_viewed(),
@@ -282,11 +283,12 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(""),
         Line::from("j / Down     Scroll down"),
         Line::from("k / Up       Scroll up"),
-        Line::from("d            Scroll down half page"),
-        Line::from("u            Scroll up half page"),
+        Line::from("Ctrl-d       Scroll down half page"),
+        Line::from("Ctrl-u       Scroll up half page"),
         Line::from("n / ]        Next hunk"),
         Line::from("p / [        Previous hunk"),
         Line::from("Space        Toggle viewed"),
+        Line::from("u            Undo last mark viewed"),
         Line::from("e            Open in $EDITOR"),
         Line::from("c            Comment on hunk (PR only)"),
         Line::from("S            Submit review (PR only)"),
@@ -350,6 +352,10 @@ mod tests {
 
     fn press(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
     }
 
     /// Render the app into a TestBackend buffer and return the buffer content
@@ -423,6 +429,36 @@ mod tests {
         );
         // Expanded content should still not appear.
         assert!(!screen_contains(&rows, "h1 line 0"));
+    }
+
+    #[test]
+    fn pressing_u_undoes_last_mark_viewed() {
+        let hunks = vec![make_hunk("a.rs", "h1", 5), make_hunk("b.rs", "h2", 5)];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+
+        // Mark hunk 0 viewed and advance to hunk 1.
+        handle_key(press(KeyCode::Char(' ')), &mut app);
+        assert_eq!(app.current_hunk, 1);
+
+        // 'u' undoes: hunk 0 unviewed and current again, its content re-expanded.
+        handle_key(press(KeyCode::Char('u')), &mut app);
+        assert_eq!(app.current_hunk, 0);
+        assert!(!app.viewed.contains("h1"));
+        let rows = render(&app, 80, 20);
+        assert!(screen_contains(&rows, "h1 line 0"));
+    }
+
+    #[test]
+    fn ctrl_u_scrolls_without_undoing() {
+        let hunks = vec![make_hunk("a.rs", "h1", 5), make_hunk("b.rs", "h2", 5)];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+
+        handle_key(press(KeyCode::Char(' ')), &mut app);
+        assert!(app.viewed.contains("h1"));
+
+        // Ctrl-u is half-page scroll, not undo: h1 stays viewed.
+        handle_key(ctrl_press(KeyCode::Char('u')), &mut app);
+        assert!(app.viewed.contains("h1"), "Ctrl-u must not undo viewed state");
     }
 
     #[test]

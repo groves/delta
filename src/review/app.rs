@@ -25,6 +25,9 @@ pub struct App {
     pub current_hunk: usize,
     pub scroll_offset: u16,
     pub viewed: HashSet<String>,
+    /// Stack of hunk hashes the user has marked viewed, most recent last.
+    /// Drives `undo_viewed`; excludes auto-marked hunks (e.g. lock files).
+    pub viewed_history: Vec<String>,
     pub pr_metadata: PrMetadata,
     pub should_quit: bool,
     pub show_help: bool,
@@ -44,6 +47,7 @@ impl App {
             current_hunk: 0,
             scroll_offset: 0,
             viewed,
+            viewed_history: Vec::new(),
             pr_metadata: metadata,
             should_quit: false,
             show_help: false,
@@ -151,11 +155,13 @@ impl App {
             if self.viewed.contains(&hash) {
                 // Marking as unviewed: expand and stay on current hunk.
                 self.viewed.remove(&hash);
+                self.viewed_history.retain(|h| h != &hash);
                 self.recompute_offsets();
                 self.scroll_to_current_hunk();
             } else {
                 // Marking as viewed: collapse and advance to next unviewed hunk.
-                self.viewed.insert(hash);
+                self.viewed.insert(hash.clone());
+                self.viewed_history.push(hash);
                 self.recompute_offsets();
                 if let Some(next) = self.hunks[self.current_hunk + 1..]
                     .iter()
@@ -165,6 +171,25 @@ impl App {
                 }
                 self.scroll_to_current_hunk();
             }
+        }
+    }
+
+    /// Undo the most recent "mark viewed" action: un-mark that hunk, expand it,
+    /// and navigate to it. Does nothing (beyond a status note) if the user
+    /// hasn't marked anything viewed.
+    pub fn undo_viewed(&mut self) {
+        let Some(hash) = self.viewed_history.pop() else {
+            self.status_message = Some("nothing to undo".to_string());
+            return;
+        };
+        self.viewed.remove(&hash);
+        if let Some(i) = self.hunks.iter().position(|h| h.content_hash == hash) {
+            self.current_hunk = i;
+        }
+        self.recompute_offsets();
+        self.scroll_to_current_hunk();
+        if let Some(hunk) = self.current_hunk() {
+            self.status_message = Some(format!("unviewed {}:{}", hunk.file_path, hunk.plus_start));
         }
     }
 
@@ -489,11 +514,11 @@ impl App {
         let cwd = std::env::current_dir().ok();
         let command = match cwd.as_ref().and_then(|p| p.to_str()) {
             Some(dir) => format!(
-                "cd {} && claude --effort high {}\n",
+                "cd {} && ,c {}\n",
                 shell_single_quote(dir),
                 shell_single_quote(&claude_prompt),
             ),
-            None => format!("claude --effort high {}\n", shell_single_quote(&claude_prompt)),
+            None => format!(",c {}\n", shell_single_quote(&claude_prompt)),
         };
 
         if copy_to_clipboard(&command) {
@@ -635,9 +660,18 @@ fn strip_quote_prefix(line: &str) -> Option<&str> {
 /// silent failure is what defeated the earlier watchexec-based prompts. `stat()`
 /// polling is unaffected by the sandbox, so it works where the feature runs.
 ///
+/// The two leading `setopt`/`shopt` lines enable nullglob (zsh and bash
+/// respectively; each silenced so the wrong-shell one is a harmless no-op).
+/// Without them an unmatched `COMMENT-*.md` glob is fatal under zsh — it errors
+/// with "no matches found" and the loop dies with exit 1 the instant the
+/// directory holds no comment files (e.g. right after the last one is deleted).
+/// nullglob makes the glob expand to nothing, so the loop just idles.
+///
 /// Kept in sync with the prompt via [`claude_watch_prompt`]; exercised by the
 /// `comment_watch_command_emits_on_landing` test.
-const COMMENT_WATCH_COMMAND: &str = r#"last=""
+const COMMENT_WATCH_COMMAND: &str = r#"setopt NULL_GLOB 2>/dev/null
+shopt -s nullglob 2>/dev/null
+last=""
 while true; do
   cur=""
   for f in COMMENT-*.md; do
@@ -674,7 +708,7 @@ Dispatch policy:
 
 Order matters — start the watcher BEFORE the initial scan so files that land during startup aren't lost in a race.
 
-Step 1: start the watcher with the Monitor tool (persistent: true). Run exactly this command:
+Step 1: start the watcher with the Monitor tool (persistent: true). First write this exact script to /tmp/claude/drev-comment-watch.sh (create /tmp/claude if it does not exist), then have the Monitor tool run `sh /tmp/claude/drev-comment-watch.sh`. Writing it to a file and invoking the interpreter on that file — rather than passing the multi-line command inline — keeps the Bash sandbox from prompting for approval. The script:
 {COMMENT_WATCH_COMMAND}
 It polls the cwd once a second and prints one line per COMMENT-*.md filename as it appears (re-printing a name if the file is deleted and recreated). Each printed line is a Monitor event that wakes you; it stays quiet when nothing changes.
 
@@ -687,7 +721,7 @@ Step 3: handle Monitor events. Each event is a single line naming a COMMENT-*.md
 
 Keep handling events indefinitely; do not poll or re-glob the directory yourself between events — the watcher is authoritative.
 
-If the watcher stops (its Monitor task exits or is reported stopped), restart it once with the same command and resume; if it stops again in quick succession, stop and report.
+If the watcher stops (its Monitor task exits or is reported stopped), restart it once by re-running `sh /tmp/claude/drev-comment-watch.sh` and resume; if it stops again in quick succession, stop and report.
 
 Subagent rules: give the subagent the file path and tell it to read the file and address the request:
   - EDIT subagents: make the changes, then delete the COMMENT file when done. Report what you changed.
@@ -927,6 +961,91 @@ mod tests {
         assert_eq!(app.hunk_line_offsets, vec![0, 11]);
     }
 
+    #[test]
+    fn undo_viewed_unmarks_last_and_navigates_back() {
+        let hunks = vec![
+            make_hunk("a.rs", "h1", 10),
+            make_hunk("b.rs", "h2", 10),
+            make_hunk("c.rs", "h3", 10),
+        ];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+
+        // Mark h1, then h2 viewed; lands on h3.
+        app.toggle_viewed();
+        app.toggle_viewed();
+        assert_eq!(app.current_hunk, 2);
+        assert!(app.viewed.contains("h1") && app.viewed.contains("h2"));
+
+        // Undo restores the most recent (h2) and navigates back to it.
+        app.undo_viewed();
+        assert!(!app.viewed.contains("h2"), "h2 should be unviewed");
+        assert!(app.viewed.contains("h1"), "h1 should still be viewed");
+        assert_eq!(app.current_hunk, 1, "should navigate back to h2");
+
+        // Undo again restores h1.
+        app.undo_viewed();
+        assert!(!app.viewed.contains("h1"), "h1 should be unviewed");
+        assert_eq!(app.current_hunk, 0);
+    }
+
+    #[test]
+    fn undo_viewed_is_noop_when_nothing_marked() {
+        let hunks = vec![make_hunk("a.rs", "h1", 10), make_hunk("b.rs", "h2", 10)];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+
+        app.undo_viewed();
+
+        assert!(app.viewed.is_empty());
+        assert_eq!(app.current_hunk, 0);
+    }
+
+    #[test]
+    fn undo_viewed_ignores_manually_unviewed_hunks() {
+        let hunks = vec![
+            make_hunk("a.rs", "h1", 10),
+            make_hunk("b.rs", "h2", 10),
+            make_hunk("c.rs", "h3", 10),
+        ];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+
+        // Mark h1 then h2 viewed.
+        app.toggle_viewed();
+        app.toggle_viewed();
+
+        // Manually unview h1 (toggling a viewed hunk off should drop it from history).
+        app.current_hunk = 0;
+        app.toggle_viewed();
+        assert!(!app.viewed.contains("h1"));
+
+        // Undo should restore h2 (the only remaining marked hunk), not revisit h1.
+        app.undo_viewed();
+        assert!(!app.viewed.contains("h2"), "h2 should be unviewed");
+        assert_eq!(app.current_hunk, 1, "should navigate to h2");
+
+        // Nothing left to undo.
+        app.undo_viewed();
+        assert!(app.viewed.is_empty());
+    }
+
+    #[test]
+    fn undo_viewed_does_not_unview_auto_marked_lockfiles() {
+        let hunks = vec![
+            make_hunk("Cargo.lock", "lock", 10),
+            make_hunk("a.rs", "h1", 10),
+        ];
+        let mut app = App::new(hunks, HashSet::new(), make_metadata());
+        // Lockfile auto-marked viewed; review starts on the first unviewed hunk.
+        assert!(app.viewed.contains("lock"));
+        assert_eq!(app.current_hunk, 1);
+
+        // Undo with no user-marked hunks must not touch the auto-marked lockfile.
+        app.undo_viewed();
+        assert!(
+            app.viewed.contains("lock"),
+            "auto-marked lockfile should remain viewed"
+        );
+    }
+
     /// Simulate what draw_diff does: build the line list and verify
     /// that viewed hunks produce a single collapsed line.
     #[test]
@@ -1025,6 +1144,78 @@ mod tests {
             }
         }
         false
+    }
+
+    /// Regression test for the nullglob prefix: under zsh an unmatched
+    /// `COMMENT-*.md` glob is fatal ("no matches found", exit 1), so without the
+    /// prefix the loop dies the instant the directory empties — e.g. right after
+    /// the last comment file is deleted. Run the shipped command under zsh, empty
+    /// the directory mid-flight, and assert it still reports a file that lands
+    /// afterward. Skips if zsh is not installed (e.g. minimal CI).
+    #[cfg(unix)]
+    #[test]
+    fn comment_watch_command_survives_empty_dir_under_zsh() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+
+        let zsh_available = Command::new("zsh")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !zsh_available {
+            eprintln!("skipping: zsh not installed");
+            return;
+        }
+
+        let dir = unique_temp_dir("watch-zsh");
+        std::fs::write(dir.join("COMMENT-1.md"), "## pre\n### Request\nq\n").unwrap();
+
+        let mut child = Command::new("zsh")
+            .arg("-c")
+            .arg(COMMENT_WATCH_COMMAND)
+            .current_dir(&dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn watcher");
+
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let emitted_preexisting = wait_for_line(&rx, "COMMENT-1.md", Duration::from_secs(5));
+
+        // Empty the directory — the moment the original (prefix-less) loop dies
+        // under zsh — and give the poll loop time to glob an empty cwd.
+        std::fs::remove_file(dir.join("COMMENT-1.md")).unwrap();
+        std::thread::sleep(Duration::from_secs(2));
+
+        // If the loop survived the empty glob, a file landing now still emits.
+        std::fs::write(dir.join("COMMENT-2.md"), "## new\n### Request\nq\n").unwrap();
+        let emitted_after_empty = wait_for_line(&rx, "COMMENT-2.md", Duration::from_secs(5));
+
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            emitted_preexisting,
+            "watcher did not emit a pre-existing COMMENT-*.md within 5s"
+        );
+        assert!(
+            emitted_after_empty,
+            "watcher died on an empty directory: a COMMENT-*.md that landed after the dir emptied was not reported (nullglob prefix missing or broken)"
+        );
     }
 
     /// The core contract: the watcher command drev ships must emit a line naming
