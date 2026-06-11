@@ -3,29 +3,21 @@ use std::io::{self, stdout};
 use anyhow::{Context, Result};
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
+use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use super::app::App;
 
 pub fn run_tui(app: &mut App) -> Result<()> {
-    enable_raw_mode().context("Failed to enable raw mode")?;
-    stdout()
-        .execute(EnterAlternateScreen)
-        .context("Failed to enter alternate screen")?;
-
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
+    // ratatui::init enters the alternate screen, enables raw mode, and installs a
+    // panic hook that restores the terminal so a panic mid-review doesn't leave the
+    // user's terminal wedged.
+    let mut terminal = ratatui::try_init().context("Failed to initialize terminal")?;
 
     let result = run_event_loop(&mut terminal, app);
 
-    disable_raw_mode().context("Failed to disable raw mode")?;
-    stdout()
-        .execute(LeaveAlternateScreen)
-        .context("Failed to leave alternate screen")?;
+    ratatui::try_restore().context("Failed to restore terminal")?;
 
     result
 }
@@ -38,6 +30,15 @@ fn run_event_loop(
         return Ok(());
     }
 
+    // Blank the physical screen once on entry. Some terminals (notably over SSH)
+    // don't clear the alternate screen when switching to it, so without this the
+    // first frame draws on top of whatever was there before (e.g. claude's output).
+    // We clear via the backend (a plain `\x1b[2J`) rather than `Terminal::clear`,
+    // which in ratatui 0.30 issues a blocking cursor-position query (`\x1b[6n`)
+    // that can time out over SSH. The first draw repaints fully against the empty
+    // buffer, so blanking the screen is all that's needed here.
+    terminal.backend_mut().clear()?;
+
     loop {
         terminal.draw(|frame| draw(frame, app))?;
 
@@ -48,8 +49,7 @@ fn run_event_loop(
                 || key.code == KeyCode::Char('a')
             {
                 // Leave TUI, run editor/comment/submit/ask-claude, then restore and force full redraw.
-                disable_raw_mode().ok();
-                stdout().execute(LeaveAlternateScreen).ok();
+                ratatui::restore();
                 match key.code {
                     KeyCode::Char('c') => {
                         app.start_comment();

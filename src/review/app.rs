@@ -791,8 +791,31 @@ fn shell_single_quote(s: &str) -> String {
     out
 }
 
-/// Pipe `text` into `pbcopy`. Returns true on success.
+/// Copy `text` to the user's clipboard, returning true on success.
+///
+/// Over SSH, `pbcopy` is either absent (a Linux remote) or sets the *remote*
+/// host's clipboard rather than the terminal the user is actually sitting at, so
+/// we emit an OSC 52 escape sequence instead: the terminal emulator at the near
+/// end of the SSH connection intercepts it and writes the local clipboard.
+/// Locally we prefer `pbcopy` (no terminal cooperation required) and fall back to
+/// OSC 52 — which also covers Linux desktops that have no `pbcopy`.
 fn copy_to_clipboard(text: &str) -> bool {
+    if is_ssh_session() {
+        copy_via_osc52(text) || copy_via_pbcopy(text)
+    } else {
+        copy_via_pbcopy(text) || copy_via_osc52(text)
+    }
+}
+
+/// True when running inside an SSH session, where clipboard tools on this host
+/// cannot reach the user's local clipboard.
+fn is_ssh_session() -> bool {
+    std::env::var_os("SSH_TTY").is_some() || std::env::var_os("SSH_CONNECTION").is_some()
+}
+
+/// Pipe `text` into `pbcopy`. Returns true on success, false if `pbcopy` is
+/// missing or fails.
+fn copy_via_pbcopy(text: &str) -> bool {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -806,6 +829,31 @@ fn copy_to_clipboard(text: &str) -> bool {
         return false;
     }
     matches!(child.wait(), Ok(s) if s.success())
+}
+
+/// Set the clipboard via crossterm's OSC 52 `CopyToClipboard` command, written to
+/// the controlling terminal. This works through SSH because the sequence is
+/// interpreted by the local terminal emulator, not on the remote host. Requires a
+/// terminal with
+/// OSC 52 clipboard support enabled (iTerm2, kitty, WezTerm, Ghostty, …).
+///
+/// We write to `/dev/tty` so the sequence reaches the terminal even if stdout has
+/// been redirected, falling back to stdout. This is only called while the TUI has
+/// left the alternate screen (see `tui::run_event_loop`), so it won't corrupt a
+/// frame being drawn.
+fn copy_via_osc52(text: &str) -> bool {
+    use crossterm::clipboard::CopyToClipboard;
+    use crossterm::execute;
+
+    // Prefer the controlling terminal so the sequence reaches the emulator even if
+    // stdout has been redirected; fall back to stdout.
+    if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty")
+        && execute!(tty, CopyToClipboard::to_clipboard_from(text)).is_ok()
+    {
+        return true;
+    }
+
+    execute!(std::io::stdout(), CopyToClipboard::to_clipboard_from(text)).is_ok()
 }
 
 /// Find the line number of the first `+` (added) line in the hunk's raw diff.
