@@ -38,6 +38,9 @@ pub struct App {
     pub status_message: Option<String>,
     /// True after `r` is pressed; the next key either confirms (y/Y) or cancels.
     pub awaiting_revert_confirm: bool,
+    /// Highest `drev-<N>.md` id seen on disk at startup or created this session.
+    /// Monotonic: ids never repeat within a session even after files are deleted.
+    comment_seq: u32,
 }
 
 impl App {
@@ -55,6 +58,7 @@ impl App {
             pending_comments: Vec::new(),
             status_message: None,
             awaiting_revert_confirm: false,
+            comment_seq: max_comment_id_on_disk(),
         };
         // Auto-mark lock files as viewed.
         for hunk in &app.hunks {
@@ -419,10 +423,10 @@ impl App {
         true
     }
 
-    /// Open $EDITOR for the user to type an instruction, then append the hunk's
-    /// diff and the instruction to `COMMENTS.md` in the current directory so a
-    /// separate Claude invocation can read and act on them. Non-blocking: drev
-    /// stays open.
+    /// Open $EDITOR for the user to type an instruction, then write the hunk's
+    /// diff and the instruction to a `drev-<id>.md` file in the current directory
+    /// so a separate Claude invocation can read and act on them. Non-blocking:
+    /// drev stays open.
     pub fn ask_claude(&mut self) -> bool {
         let hunk = match self.current_hunk() {
             Some(h) => h,
@@ -435,7 +439,7 @@ impl App {
         let target_line = self.topmost_visible_line().unwrap_or(hunk.plus_start);
 
         // Template: each diff line is prefixed with `> ` so the user can delete
-        // any lines they don't want saved to COMMENTS.md (target a subset).
+        // any lines they don't want saved to the drev-<id>.md file (target a subset).
         // Helper text uses `#` and is stripped from both the diff and the
         // instruction.
         let mut template = String::new();
@@ -492,8 +496,8 @@ impl App {
             return false;
         }
 
-        let comment_id = next_comment_id();
-        let comment_filename = format!("COMMENT-{}.md", comment_id);
+        let comment_id = self.next_comment_id();
+        let comment_filename = format!("drev-{}.md", comment_id);
         let comment_path = std::path::PathBuf::from(&comment_filename);
 
         let mut entry = String::new();
@@ -633,6 +637,14 @@ impl App {
             .filter(|h| self.viewed.contains(&h.content_hash))
             .count()
     }
+
+    /// Pick the next id for a `drev-<id>.md` file, incrementing from the last id
+    /// seen on disk or created this session. Never reuses a number even if the
+    /// file was deleted, so claude can delete every comment file it processes.
+    fn next_comment_id(&mut self) -> u32 {
+        self.comment_seq = advance_comment_seq(self.comment_seq, max_comment_id_on_disk());
+        self.comment_seq
+    }
 }
 
 /// Strip the editor-template `> ` prefix used to mark diff lines. Returns the
@@ -648,7 +660,7 @@ fn strip_quote_prefix(line: &str) -> Option<&str> {
     }
 }
 
-/// Shell command (POSIX `sh`) that watches the cwd for `COMMENT-*.md` files and
+/// Shell command (POSIX `sh`) that watches the cwd for `drev-*.md` files and
 /// prints one line per file as it appears, re-printing a name if the file is
 /// deleted and recreated. It is meant to run under Claude's Monitor tool so each
 /// printed line becomes an event that wakes the agent.
@@ -662,7 +674,7 @@ fn strip_quote_prefix(line: &str) -> Option<&str> {
 ///
 /// The two leading `setopt`/`shopt` lines enable nullglob (zsh and bash
 /// respectively; each silenced so the wrong-shell one is a harmless no-op).
-/// Without them an unmatched `COMMENT-*.md` glob is fatal under zsh — it errors
+/// Without them an unmatched `drev-*.md` glob is fatal under zsh — it errors
 /// with "no matches found" and the loop dies with exit 1 the instant the
 /// directory holds no comment files (e.g. right after the last one is deleted).
 /// nullglob makes the glob expand to nothing, so the loop just idles.
@@ -674,7 +686,7 @@ shopt -s nullglob 2>/dev/null
 last=""
 while true; do
   cur=""
-  for f in COMMENT-*.md; do
+  for f in drev-*.md; do
     [ -e "$f" ] || continue
     cur="$cur $f"
   done
@@ -689,16 +701,16 @@ while true; do
 done"#;
 
 /// Build the prompt drev hands to a separate `claude` invocation so it watches
-/// for and processes `COMMENT-*.md` files as the user drops them. Embeds
+/// for and processes `drev-*.md` files as the user drops them. Embeds
 /// [`COMMENT_WATCH_COMMAND`] verbatim so the prompt and the tested command never
 /// drift apart.
 fn claude_watch_prompt() -> String {
     format!(
-        r#"Process COMMENT-<id>.md files in this directory (e.g. COMMENT-1.md, COMMENT-2.md). Each file contains a diff hunk and a `### Request` section.
+        r#"Process drev-<id>.md files in this directory (e.g. drev-1.md, drev-2.md). Each file contains a diff hunk and a `### Request` section.
 
 A separate program writes these files as the user reviews code, so they appear over time and you must react to each as it lands. Do NOT use a native filesystem-event watcher (watchexec, fswatch, inotifywait): the Bash sandbox starves the FSEvents/kqueue APIs they rely on, so they register nothing and emit nothing — they fail silently. Use the polling watcher below.
 
-Each COMMENT is one of two kinds; read its `### Request` to classify it:
+Each drev-<id>.md file is one of two kinds; read its `### Request` to classify it:
   - QUESTION — it only asks for information or an explanation; answering it does not modify any file in the repo.
   - EDIT — fulfilling it requires changing code or other repo files.
 
@@ -710,11 +722,11 @@ Order matters — start the watcher BEFORE the initial scan so files that land d
 
 Step 1: start the watcher with the Monitor tool (persistent: true). First write this exact script to /tmp/claude/drev-comment-watch.sh (create /tmp/claude if it does not exist), then have the Monitor tool run `sh /tmp/claude/drev-comment-watch.sh`. Writing it to a file and invoking the interpreter on that file — rather than passing the multi-line command inline — keeps the Bash sandbox from prompting for approval. The script:
 {COMMENT_WATCH_COMMAND}
-It polls the cwd once a second and prints one line per COMMENT-*.md filename as it appears (re-printing a name if the file is deleted and recreated). Each printed line is a Monitor event that wakes you; it stays quiet when nothing changes.
+It polls the cwd once a second and prints one line per drev-*.md filename as it appears (re-printing a name if the file is deleted and recreated). Each printed line is a Monitor event that wakes you; it stays quiet when nothing changes.
 
-Step 2: list the COMMENT-*.md already present, read and classify each, and route it per the dispatch policy (fire questions now; append edits to the queue and start the first one). Track handled paths in a set — call it `dispatched`.
+Step 2: list the drev-*.md already present, read and classify each, and route it per the dispatch policy (fire questions now; append edits to the queue and start the first one). Track handled paths in a set — call it `dispatched`.
 
-Step 3: handle Monitor events. Each event is a single line naming a COMMENT-*.md file. For each line:
+Step 3: handle Monitor events. Each event is a single line naming a drev-*.md file. For each line:
   - if the path is already in `dispatched`, skip it (already handled or in flight);
   - otherwise add it to `dispatched`, read and classify it, route it per the dispatch policy, and remove it from `dispatched` once its subagent finishes.
   This prevents the double-dispatch at startup — the initial scan and the watcher's first poll both surface pre-existing files — while still letting a recycled filename (deleted then recreated) be picked up.
@@ -723,35 +735,45 @@ Keep handling events indefinitely; do not poll or re-glob the directory yourself
 
 If the watcher stops (its Monitor task exits or is reported stopped), restart it once by re-running `sh /tmp/claude/drev-comment-watch.sh` and resume; if it stops again in quick succession, stop and report.
 
-Subagent rules: give the subagent the file path and tell it to read the file and address the request:
-  - EDIT subagents: make the changes, then delete the COMMENT file when done. Report what you changed.
-  - QUESTION subagents: append a `### Response` section with the answer to the file, leave the file in place, and return the answer.
+Subagent rules: give the subagent the file path and tell it to read the file and address the request. Every subagent MUST delete its drev-<id>.md file when done — always, whether it was a QUESTION or an EDIT, and whether it succeeded or failed:
+  - EDIT subagents: make the changes, then delete the drev-<id>.md file. Report what you changed.
+  - QUESTION subagents: answer the question, then delete the drev-<id>.md file. Return the answer.
 
-After a QUESTION subagent finishes, print the question (the text of its `### Request`) and the answer here in this session, so the user sees the Q&A in the terminal as well as in the file."#
+After a QUESTION subagent finishes, print the question (the text of its `### Request`) and the answer here in this session, so the user sees the Q&A in the terminal."#
     )
 }
 
-/// Pick the next unused id for a `COMMENT-<id>.md` file in the cwd.
-fn next_comment_id() -> u32 {
+/// Highest id `N` among `drev-<N>.md` files in the cwd, or 0 if none exist.
+fn max_comment_id_on_disk() -> u32 {
+    max_comment_id_in(std::path::Path::new("."))
+}
+
+/// Highest id `N` among `drev-<N>.md` files in `dir`, or 0 if none exist.
+fn max_comment_id_in(dir: &std::path::Path) -> u32 {
     let mut max_id = 0u32;
-    if let Ok(entries) = std::fs::read_dir(".") {
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            let Some(rest) = name.strip_prefix("COMMENT-") else {
+            let Some(rest) = name.strip_prefix("drev-") else {
                 continue;
             };
             let Some(num_str) = rest.strip_suffix(".md") else {
                 continue;
             };
             if let Ok(n) = num_str.parse::<u32>() {
-                if n > max_id {
-                    max_id = n;
-                }
+                max_id = max_id.max(n);
             }
         }
     }
-    max_id + 1
+    max_id
+}
+
+/// Next id given the session high-water mark and the max id currently on disk.
+/// `max(seq, on_disk) + 1` so ids never repeat within a session even after the
+/// files are deleted, and never collide with a higher file that appeared on disk.
+fn advance_comment_seq(seq: u32, on_disk: u32) -> u32 {
+    seq.max(on_disk) + 1
 }
 
 /// POSIX single-quote a string: wrap in `'…'`, escaping any `'` as `'\''`.
@@ -843,6 +865,47 @@ mod tests {
             repo: String::new(),
             head_sha: String::new(),
         }
+    }
+
+    #[test]
+    fn max_comment_id_in_picks_highest_drev_file() {
+        let dir = unique_temp_dir("max-id");
+        std::fs::write(dir.join("drev-2.md"), "x").unwrap();
+        std::fs::write(dir.join("drev-7.md"), "x").unwrap();
+        std::fs::write(dir.join("drev-10.md"), "x").unwrap();
+        // Non-matching names must be ignored.
+        std::fs::write(dir.join("drev-foo.md"), "x").unwrap();
+        std::fs::write(dir.join("COMMENT-99.md"), "x").unwrap();
+        std::fs::write(dir.join("drev-3.txt"), "x").unwrap();
+        assert_eq!(max_comment_id_in(&dir), 10);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn max_comment_id_in_is_zero_for_empty_dir() {
+        let dir = unique_temp_dir("max-id-empty");
+        assert_eq!(max_comment_id_in(&dir), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advance_comment_seq_never_reuses_after_deletion() {
+        // Fresh dir, fresh session.
+        let mut seq = 0;
+        seq = advance_comment_seq(seq, 0);
+        assert_eq!(seq, 1);
+        // The file for id 1 is deleted (disk back to 0) — the next id is still 2.
+        seq = advance_comment_seq(seq, 0);
+        assert_eq!(seq, 2, "must not reuse a number even when disk is empty");
+    }
+
+    #[test]
+    fn advance_comment_seq_jumps_past_higher_disk_files() {
+        // A higher file appeared on disk (e.g. a leftover from before) — skip past it.
+        let seq = advance_comment_seq(2, 5);
+        assert_eq!(seq, 6);
+        // And keep climbing from there even if those files go away.
+        assert_eq!(advance_comment_seq(seq, 0), 7);
     }
 
     #[test]
@@ -1147,7 +1210,7 @@ mod tests {
     }
 
     /// Regression test for the nullglob prefix: under zsh an unmatched
-    /// `COMMENT-*.md` glob is fatal ("no matches found", exit 1), so without the
+    /// `drev-*.md` glob is fatal ("no matches found", exit 1), so without the
     /// prefix the loop dies the instant the directory empties — e.g. right after
     /// the last comment file is deleted. Run the shipped command under zsh, empty
     /// the directory mid-flight, and assert it still reports a file that lands
@@ -1172,7 +1235,7 @@ mod tests {
         }
 
         let dir = unique_temp_dir("watch-zsh");
-        std::fs::write(dir.join("COMMENT-1.md"), "## pre\n### Request\nq\n").unwrap();
+        std::fs::write(dir.join("drev-1.md"), "## pre\n### Request\nq\n").unwrap();
 
         let mut child = Command::new("zsh")
             .arg("-c")
@@ -1193,16 +1256,16 @@ mod tests {
             }
         });
 
-        let emitted_preexisting = wait_for_line(&rx, "COMMENT-1.md", Duration::from_secs(5));
+        let emitted_preexisting = wait_for_line(&rx, "drev-1.md", Duration::from_secs(5));
 
         // Empty the directory — the moment the original (prefix-less) loop dies
         // under zsh — and give the poll loop time to glob an empty cwd.
-        std::fs::remove_file(dir.join("COMMENT-1.md")).unwrap();
+        std::fs::remove_file(dir.join("drev-1.md")).unwrap();
         std::thread::sleep(Duration::from_secs(2));
 
         // If the loop survived the empty glob, a file landing now still emits.
-        std::fs::write(dir.join("COMMENT-2.md"), "## new\n### Request\nq\n").unwrap();
-        let emitted_after_empty = wait_for_line(&rx, "COMMENT-2.md", Duration::from_secs(5));
+        std::fs::write(dir.join("drev-2.md"), "## new\n### Request\nq\n").unwrap();
+        let emitted_after_empty = wait_for_line(&rx, "drev-2.md", Duration::from_secs(5));
 
         let _ = child.kill();
         let _ = child.wait();
@@ -1210,16 +1273,16 @@ mod tests {
 
         assert!(
             emitted_preexisting,
-            "watcher did not emit a pre-existing COMMENT-*.md within 5s"
+            "watcher did not emit a pre-existing drev-*.md within 5s"
         );
         assert!(
             emitted_after_empty,
-            "watcher died on an empty directory: a COMMENT-*.md that landed after the dir emptied was not reported (nullglob prefix missing or broken)"
+            "watcher died on an empty directory: a drev-*.md that landed after the dir emptied was not reported (nullglob prefix missing or broken)"
         );
     }
 
     /// The core contract: the watcher command drev ships must emit a line naming
-    /// a `COMMENT-*.md` file both when one already exists at startup and — the
+    /// a `drev-*.md` file both when one already exists at startup and — the
     /// part every native-FS-event iteration silently failed — when one lands
     /// *after* the watcher is running. Deterministic and fast; runs in `cargo test`.
     #[cfg(unix)]
@@ -1233,7 +1296,7 @@ mod tests {
 
         // Pre-existing file: the watcher is started before drev's own initial
         // scan, so its first poll must surface files already on disk.
-        std::fs::write(dir.join("COMMENT-1.md"), "## pre\n### Request\nq\n").unwrap();
+        std::fs::write(dir.join("drev-1.md"), "## pre\n### Request\nq\n").unwrap();
 
         let mut child = Command::new("/bin/sh")
             .arg("-c")
@@ -1254,12 +1317,12 @@ mod tests {
             }
         });
 
-        let emitted_preexisting = wait_for_line(&rx, "COMMENT-1.md", Duration::from_secs(5));
+        let emitted_preexisting = wait_for_line(&rx, "drev-1.md", Duration::from_secs(5));
 
         // The behavior the whole feature hangs on: a file that lands while the
         // watcher is already running must produce an event.
-        std::fs::write(dir.join("COMMENT-2.md"), "## new\n### Request\nq\n").unwrap();
-        let emitted_landed = wait_for_line(&rx, "COMMENT-2.md", Duration::from_secs(5));
+        std::fs::write(dir.join("drev-2.md"), "## new\n### Request\nq\n").unwrap();
+        let emitted_landed = wait_for_line(&rx, "drev-2.md", Duration::from_secs(5));
 
         let _ = child.kill();
         let _ = child.wait();
@@ -1267,19 +1330,19 @@ mod tests {
 
         assert!(
             emitted_preexisting,
-            "watcher did not emit a pre-existing COMMENT-*.md within 5s"
+            "watcher did not emit a pre-existing drev-*.md within 5s"
         );
         assert!(
             emitted_landed,
-            "watcher did not emit a COMMENT-*.md that landed after startup within 5s"
+            "watcher did not emit a drev-*.md that landed after startup within 5s"
         );
     }
 
     /// End-to-end: launch a real headless `claude` with the actual shipped
-    /// prompt, drop a question-COMMENT after it starts, and assert the agent
-    /// picks it up and appends a `### Response`. Ignored by default — it needs a
-    /// `claude` binary (with the Monitor and Agent tools), network, and costs
-    /// tokens. Run with:
+    /// prompt, drop a question file after it starts, and assert the agent picks
+    /// it up, answers in the session, and deletes the file. Ignored by default —
+    /// it needs a `claude` binary (with the Monitor and Agent tools), network,
+    /// and costs tokens. Run with:
     ///   cargo test -p git-delta claude_processes_landed_comment_end_to_end \
     ///     -- --ignored --nocapture
     /// Override the binary with CLAUDE_BIN=/path/to/claude.
@@ -1331,26 +1394,27 @@ mod tests {
         std::thread::sleep(Duration::from_secs(5));
 
         // A question request. The signal that the file was genuinely dispatched
-        // is the *answer* (7 × 8 = 56) appearing — a token absent from both the
-        // request text and the diff, so it can only get there if the agent ran.
-        // (Checking for the literal "### Response" marker would false-positive,
-        // since the agent is instructed to write that heading and we'd have to
-        // mention it in the request.)
+        // is the *answer* (7 × 8 = 56) appearing in the session log — a token
+        // absent from both the request text and the diff, so it can only get
+        // there if the agent ran. QUESTION subagents answer in the session (not
+        // the file) and then delete the file, so the second half of the contract
+        // is that drev-1.md is gone.
         const ANSWER: &str = "56";
-        let comment = "## `demo.txt:1`\n\n```diff\n@@ -1 +1 @@\n-foo\n+bar\n```\n\n### Request\n\nConnectivity test — do not edit any file except this one. Append the numeric answer to: what is 7 times 8?\n";
+        let comment = "## `demo.txt:1`\n\n```diff\n@@ -1 +1 @@\n-foo\n+bar\n```\n\n### Request\n\nConnectivity test — do not edit any repo file. What is 7 times 8?\n";
         assert!(
             !comment.contains(ANSWER),
             "request text must not contain the answer token, or detection is meaningless"
         );
-        std::fs::write(dir.join("COMMENT-1.md"), comment).unwrap();
+        std::fs::write(dir.join("drev-1.md"), comment).unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(240);
         let mut got_response = false;
         while Instant::now() < deadline {
-            if let Ok(s) = std::fs::read_to_string(dir.join("COMMENT-1.md"))
-                && s != comment
-                && s.contains(ANSWER)
-            {
+            let answered = std::fs::read_to_string(&log_path)
+                .map(|log| log.contains(ANSWER))
+                .unwrap_or(false);
+            let deleted = !dir.join("drev-1.md").exists();
+            if answered && deleted {
                 got_response = true;
                 break;
             }
@@ -1375,7 +1439,7 @@ mod tests {
             let tail = std::fs::read_to_string(&log_path).unwrap_or_default();
             let _ = std::fs::remove_dir_all(&dir);
             panic!(
-                "claude did not append the answer ({ANSWER}) within 240s.\n--- claude.log ---\n{tail}"
+                "claude did not answer ({ANSWER}) in the session and delete drev-1.md within 240s.\n--- claude.log ---\n{tail}"
             );
         }
         let _ = std::fs::remove_dir_all(&dir);

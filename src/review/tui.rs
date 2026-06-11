@@ -292,7 +292,7 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
         Line::from("e            Open in $EDITOR"),
         Line::from("c            Comment on hunk (PR only)"),
         Line::from("S            Submit review (PR only)"),
-        Line::from("a            Append to COMMENTS.md + copy claude cmd"),
+        Line::from("a            Write drev-<id>.md + copy claude cmd"),
         Line::from("g            Open in GitHub"),
     ];
     if !app.is_pr_mode() {
